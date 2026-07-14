@@ -1,0 +1,45 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Variables de entorno
+.env
+.env.local
+.env.*.local
+
+# Base de datos local (SQLite)
+*.db
+*.sqlite3
+
+# Distribución / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+
+# Tests / Coverage
+.pytest_cache/
+htmlcov/
+.coverage

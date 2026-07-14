@@ -1,0 +1,15 @@
+fastapi
+google-genai
+uvicorn[standard]
+supabase
+pydantic
+pydantic-settings
+python-dotenv
+pandas
+openpyxl
+ruff
+
+sentence-transformers
+scikit-learn
+numpy
+tqdm
