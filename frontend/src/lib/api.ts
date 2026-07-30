@@ -71,6 +71,21 @@ export interface SimilarPatentsResponse {
   count: number;
 }
 
+export interface RecommendedCpcCode {
+  code: string;
+  title: string;
+  reason: string;
+  confidence: "high" | "medium" | "low";
+  retrieval_score: number;
+}
+
+export interface CpcClassificationResponse {
+  recommended_codes: RecommendedCpcCode[];
+  keywords: string[];
+  google_patents_query: string;
+  notes: string;
+}
+
 /**
  * Listado paginado clásico. Si se pasa `query`, hace búsqueda léxica con ILIKE
  * sobre `ti`, `ab`, `pn`, `ww` y `apc` (no usa embeddings).
@@ -132,5 +147,27 @@ export async function fetchSimilarPatents(
     { cache: "no-store" }
   );
   if (!res.ok) throw new Error(`Error ${res.status}`);
+  return res.json();
+}
+
+export async function recommendCpcCodes(
+  description: string,
+  topK = 8
+): Promise<CpcClassificationResponse> {
+  const res = await fetch(`${API_URL}/clasificacion/cpc/recommend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description, top_k: topK }),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    const detail =
+      typeof payload?.detail === "string"
+        ? payload.detail
+        : "No fue posible analizar la descripción.";
+    throw new Error(detail);
+  }
   return res.json();
 }

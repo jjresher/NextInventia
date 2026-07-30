@@ -6,6 +6,7 @@ import os
 os.environ.setdefault("SUPABASE_URL", "http://fake-url-for-testing")
 os.environ.setdefault("SUPABASE_KEY", "fake-key-for-testing")
 os.environ.setdefault("FRONTEND_ORIGIN", "http://localhost:3000")
+os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-testing")
 
 import pytest
 from unittest.mock import MagicMock
