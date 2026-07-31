@@ -63,3 +63,30 @@ def test_recommend_cpc_rejects_invalid_top_k(client):
     )
 
     assert response.status_code == 422
+
+
+def test_cors_allows_local_network_frontend(client):
+    response = client.options(
+        "/clasificacion/cpc/recommend",
+        headers={
+            "Origin": "http://192.168.1.3:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://192.168.1.3:3000"
+
+
+def test_cors_rejects_unconfigured_public_origin(client):
+    response = client.options(
+        "/clasificacion/cpc/recommend",
+        headers={
+            "Origin": "http://example.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
