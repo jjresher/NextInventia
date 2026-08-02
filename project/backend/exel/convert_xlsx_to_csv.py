@@ -20,9 +20,33 @@ El archivo de salida se valida re-leyéndolo: misma forma y mismas celdas.
 from __future__ import annotations
 
 import csv
+import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pandas as pd
+
+
+class _HTMLStripper(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self._parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self._parts.append(data)
+
+    def get_text(self) -> str:
+        return " ".join(p.strip() for p in self._parts if p.strip())
+
+
+def strip_html(text: str) -> str:
+    if not text or "<" not in text:
+        return text
+    stripper = _HTMLStripper()
+    stripper.feed(text)
+    result = stripper.get_text()
+    result = re.sub(r"\s{2,}", " ", result)
+    return result.strip()
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -82,6 +106,7 @@ def normalize_export(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
 
+    df["descripcion"] = df["descripcion"].fillna("").astype(str).apply(strip_html)
     return df[FINAL_COLUMNS].copy()
 
 
@@ -95,7 +120,7 @@ def normalize_desc(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("El archivo de descripciones no tiene columna `desc`.")
 
     df = df[["pn", "descripcion"]].copy()
-    df["descripcion"] = df["descripcion"].fillna("").astype(str)
+    df["descripcion"] = df["descripcion"].fillna("").astype(str).apply(strip_html)
     return df
 
 
