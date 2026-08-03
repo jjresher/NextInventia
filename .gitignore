@@ -43,3 +43,7 @@ Desktop.ini
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Datos de exports/merges (archivos de trabajo, no versionar)
+backend/exel/*.xlsx
+backend/exel/*.csv
