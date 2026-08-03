@@ -2,12 +2,9 @@ from supabase import Client
 
 from app.services.embedding_service import encode_query
 
-# Columnas devueltas en listados/búsquedas. Incluye los nombres "nuevos"
-# (apc, ww, pd, lg_st) y mantiene los legacy (pc, ws, ls) por compat con
-# datos antiguos que aún no fueron re-procesados.
+# Columnas devueltas en listados/búsquedas.
 SUMMARY_COLUMNS = (
-    "id,pn,apc,cpc,ic,ww,pd,lg_st,ti,ab,espacenet,cluster_id,"
-    "pc,ws,ls"
+    "id,pn,apc,cpc,ic,ww,pd,lg_st,ti,ab,espacenet,cluster_id"
 )
 ALL_COLUMNS = "*"
 
