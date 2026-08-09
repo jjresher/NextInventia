@@ -74,9 +74,17 @@ export interface SimilarPatentsResponse {
 export interface RecommendedCpcCode {
   code: string;
   title: string;
+  level: "main_group" | "subgroup";
+  classification_path: CpcClassificationPathItem[];
   reason: string;
   confidence: "high" | "medium" | "low";
   retrieval_score: number;
+}
+
+export interface CpcClassificationPathItem {
+  code: string;
+  title: string;
+  level: "section" | "class" | "subclass" | "main_group";
 }
 
 export interface CpcClassificationResponse {
