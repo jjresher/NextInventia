@@ -14,17 +14,28 @@ from google.genai import types
 
 from app.config import settings
 from app.models.classification import (
+    CpcClassificationPathItem,
     CpcClassificationResponse,
     RecommendedCpcCode,
 )
-from app.services.embedding_service import encode_query
+from app.services.cpc_catalog import (
+    CpcCatalog,
+    CpcCatalogError,
+    CpcPathItem,
+    file_sha256,
+    load_cpc_catalog,
+)
+from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME, encode_query
 
 logger = logging.getLogger(__name__)
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_CORPUS_PATH = BACKEND_DIR / "data" / "cpc_codes.jsonl"
-DEFAULT_EMBEDDINGS_PATH = BACKEND_DIR / "data" / "cpc_embeddings.npz"
-GOOGLE_PATENTS_BASE_URL = "https://patents.google.com/"
+DEFAULT_INDEX_DIR = BACKEND_DIR / "data" / "cpc_index"
+DEFAULT_CATALOG_PATH = DEFAULT_INDEX_DIR / "titles.csv"
+DEFAULT_EMBEDDINGS_PATH = DEFAULT_INDEX_DIR / "cpc_embeddings.npy"
+DEFAULT_MANIFEST_PATH = DEFAULT_INDEX_DIR / "manifest.json"
+INDEX_VERSION = 1
+GEMINI_CANDIDATE_COUNT = 40
 
 STOPWORDS = {
     "para", "como", "con", "del", "desde", "donde", "el", "en", "entre",
@@ -34,37 +45,45 @@ STOPWORDS = {
 }
 
 
-@dataclass(frozen=True)
+class CpcIndexError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class CpcCandidate:
+    raw_code: str
     code: str
     title: str
-    definition: str
-    text: str
+    level: str
+    classification_path: tuple[CpcPathItem, ...]
+    semantic_text: str
     score: float
 
 
 class ClassificationService:
     def __init__(
         self,
-        corpus_path: Path = DEFAULT_CORPUS_PATH,
+        catalog_path: Path = DEFAULT_CATALOG_PATH,
         embeddings_path: Path = DEFAULT_EMBEDDINGS_PATH,
+        manifest_path: Path = DEFAULT_MANIFEST_PATH,
         gemini_client: Any | None = None,
     ) -> None:
-        self.corpus_path = Path(corpus_path)
+        self.catalog_path = Path(catalog_path)
         self.embeddings_path = Path(embeddings_path)
+        self.manifest_path = Path(manifest_path)
         self._gemini_client = gemini_client
-        self._records: list[dict[str, str]] | None = None
+        self._catalog: CpcCatalog | None = None
         self._embeddings: np.ndarray | None = None
         self._load_lock = Lock()
 
     def recommend(self, description: str, top_k: int = 8) -> CpcClassificationResponse:
-        candidates = self.retrieve(description, max(top_k, 12))
+        candidates = self.retrieve(description, GEMINI_CANDIDATE_COUNT)
         if not candidates:
             return CpcClassificationResponse(
                 recommended_codes=[],
                 keywords=self.extract_keywords(description),
                 google_patents_query="",
-                notes="No se encontraron candidatos CPC en el corpus local.",
+                notes="No se encontraron candidatos CPC en el indice local.",
             )
 
         try:
@@ -74,83 +93,108 @@ class ClassificationService:
             logger.warning("Gemini CPC classification failed; using fallback: %s", exc)
             return self._fallback_response(description, candidates, top_k)
 
-    def retrieve(self, description: str, top_k: int = 8) -> list[CpcCandidate]:
-        records, embeddings = self._load_index()
-        if not records:
-            return []
-
+    def retrieve(self, description: str, top_k: int = 40) -> list[CpcCandidate]:
+        catalog, embeddings = self._load_index()
         query_embedding = np.asarray(encode_query(description), dtype=np.float32)
         if query_embedding.ndim != 1 or query_embedding.shape[0] != embeddings.shape[1]:
-            raise ValueError("La dimension del embedding de consulta no coincide con el indice CPC")
+            raise CpcIndexError(
+                "La dimension del embedding de consulta no coincide con el indice CPC"
+            )
 
         scores = embeddings @ query_embedding
-        limit = min(max(top_k, 1), len(records))
-        indexes = np.argsort(scores)[::-1][:limit]
+        eligible_indexes = catalog.eligible_indexes
+        limit = min(max(top_k, 1), eligible_indexes.size)
+        if limit == 0:
+            return []
+
+        eligible_scores = scores[eligible_indexes]
+        if limit < eligible_scores.size:
+            local_indexes = np.argpartition(eligible_scores, -limit)[-limit:]
+        else:
+            local_indexes = np.arange(eligible_scores.size)
+        local_indexes = local_indexes[
+            np.argsort(eligible_scores[local_indexes])[::-1]
+        ]
+        indexes = eligible_indexes[local_indexes]
+
         return [
-            CpcCandidate(
-                code=records[index]["code"],
-                title=records[index]["title"],
-                definition=records[index].get("definition", ""),
-                text=records[index]["text"],
-                score=float(scores[index]),
-            )
+            self._candidate_from_index(catalog, scores, int(index))
             for index in indexes
         ]
 
-    def _load_index(self) -> tuple[list[dict[str, str]], np.ndarray]:
-        if self._records is not None and self._embeddings is not None:
-            return self._records, self._embeddings
+    def _candidate_from_index(
+        self,
+        catalog: CpcCatalog,
+        scores: np.ndarray,
+        index: int,
+    ) -> CpcCandidate:
+        record = catalog.records[index]
+        return CpcCandidate(
+            raw_code=record.code,
+            code=record.display_code,
+            title=record.title,
+            level=record.level,
+            classification_path=catalog.classification_path(record),
+            semantic_text=catalog.semantic_text(record),
+            score=float(scores[index]),
+        )
+
+    def _load_index(self) -> tuple[CpcCatalog, np.ndarray]:
+        if self._catalog is not None and self._embeddings is not None:
+            return self._catalog, self._embeddings
 
         with self._load_lock:
-            if self._records is not None and self._embeddings is not None:
-                return self._records, self._embeddings
+            if self._catalog is not None and self._embeddings is not None:
+                return self._catalog, self._embeddings
 
-            records = self._read_corpus()
-            embeddings = self._read_or_build_embeddings(records)
-            self._records = records
-            self._embeddings = embeddings
-            return records, embeddings
-
-    def _read_corpus(self) -> list[dict[str, str]]:
-        if not self.corpus_path.exists():
-            raise FileNotFoundError(
-                f"No existe el corpus CPC: {self.corpus_path}. "
-                "Cree backend/data/cpc_codes.jsonl antes de iniciar el servicio."
-            )
-
-        records: list[dict[str, str]] = []
-        with self.corpus_path.open(encoding="utf-8") as corpus:
-            for line_number, line in enumerate(corpus, 1):
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                missing = {"code", "title", "text"} - record.keys()
-                if missing:
-                    raise ValueError(
-                        f"Registro CPC incompleto en linea {line_number}: {sorted(missing)}"
+            for path in (
+                self.catalog_path,
+                self.embeddings_path,
+                self.manifest_path,
+            ):
+                if not path.exists():
+                    raise CpcIndexError(
+                        f"Falta el artefacto CPC {path}. Ejecute exel/index_cpc_codes.py."
                     )
-                records.append(record)
-        return records
 
-    def _read_or_build_embeddings(self, records: list[dict[str, str]]) -> np.ndarray:
-        if self.embeddings_path.exists():
-            with np.load(self.embeddings_path) as index:
-                embeddings = np.asarray(index["embeddings"], dtype=np.float32)
-            if embeddings.ndim != 2 or embeddings.shape[0] != len(records):
-                raise ValueError(
-                    "El indice CPC no coincide con el corpus. "
-                    "Ejecute: python exel/index_cpc_codes.py"
+            try:
+                manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+                catalog = load_cpc_catalog(self.catalog_path)
+                embeddings = np.load(
+                    self.embeddings_path,
+                    mmap_mode="r",
+                    allow_pickle=False,
                 )
-            return embeddings
+            except (CpcCatalogError, OSError, ValueError, json.JSONDecodeError) as exc:
+                raise CpcIndexError(f"No se pudo cargar el indice CPC: {exc}") from exc
 
-        logger.info(
-            "No existe %s; generando indice CPC en memoria. "
-            "Ejecute exel/index_cpc_codes.py para acelerar el arranque.",
-            self.embeddings_path,
-        )
-        if not records:
-            return np.empty((0, 0), dtype=np.float32)
-        return np.asarray([encode_query(record["text"]) for record in records], dtype=np.float32)
+            self._validate_index(manifest, catalog, embeddings)
+            self._catalog = catalog
+            self._embeddings = embeddings
+            return catalog, embeddings
+
+    def _validate_index(
+        self,
+        manifest: dict[str, Any],
+        catalog: CpcCatalog,
+        embeddings: np.ndarray,
+    ) -> None:
+        expected_rows = len(catalog.records)
+        expected_shape = (expected_rows, EMBEDDING_DIM)
+        checks = {
+            "version": manifest.get("index_version") == INDEX_VERSION,
+            "model": manifest.get("model_name") == MODEL_NAME,
+            "rows": manifest.get("row_count") == expected_rows,
+            "hash": manifest.get("source_sha256") == file_sha256(self.catalog_path),
+            "shape": embeddings.shape == expected_shape,
+            "dtype": embeddings.dtype == np.float32,
+        }
+        failed = [name for name, valid in checks.items() if not valid]
+        if failed:
+            raise CpcIndexError(
+                "El indice CPC no coincide con titles.csv "
+                f"({', '.join(failed)}). Ejecute exel/index_cpc_codes.py."
+            )
 
     def _get_gemini_client(self) -> Any:
         if self._gemini_client is None:
@@ -167,7 +211,11 @@ class ClassificationService:
             {
                 "code": item.code,
                 "title": item.title,
-                "definition": item.definition,
+                "level": item.level,
+                "classification_path": [
+                    {"code": path.code, "title": path.title, "level": path.level}
+                    for path in item.classification_path
+                ],
                 "retrieval_score": round(item.score, 4),
             }
             for item in candidates
@@ -177,6 +225,7 @@ class ClassificationService:
 REGLAS:
 - Solo puedes devolver codigos presentes en CANDIDATOS.
 - No inventes ni completes codigos fuera de la lista.
+- Prefiere el codigo mas especifico respaldado por la descripcion.
 - Explica brevemente la relacion tecnica en espanol.
 - confidence debe ser high, medium o low.
 - Extrae entre 3 y 8 keywords tecnicas, preferiblemente en ingles para Google Patents.
@@ -208,28 +257,28 @@ FORMATO:
         description: str,
         top_k: int,
     ) -> CpcClassificationResponse:
-        candidate_map = {candidate.code: candidate for candidate in candidates}
+        candidate_map = {
+            self._normalize_code(candidate.code): candidate for candidate in candidates
+        }
         recommendations: list[RecommendedCpcCode] = []
         seen: set[str] = set()
 
         for item in generated.get("recommended_codes", []):
-            code = str(item.get("code", "")).strip()
-            candidate = candidate_map.get(code)
-            if not candidate or code in seen:
+            normalized_code = self._normalize_code(str(item.get("code", "")))
+            candidate = candidate_map.get(normalized_code)
+            if not candidate or normalized_code in seen:
                 continue
             confidence = str(item.get("confidence", "medium")).lower()
             if confidence not in {"high", "medium", "low"}:
                 confidence = "medium"
             recommendations.append(
-                RecommendedCpcCode(
-                    code=code,
-                    title=candidate.title,
-                    reason=str(item.get("reason") or candidate.definition),
+                self._to_recommendation(
+                    candidate,
+                    reason=str(item.get("reason") or candidate.semantic_text),
                     confidence=confidence,
-                    retrieval_score=round(candidate.score, 4),
                 )
             )
-            seen.add(code)
+            seen.add(normalized_code)
             if len(recommendations) >= top_k:
                 break
 
@@ -239,19 +288,7 @@ FORMATO:
         keywords = self._clean_keywords(generated.get("keywords", []))
         if not keywords:
             keywords = self.extract_keywords(description)
-        query = self.build_google_patents_query(
-            [item.code for item in recommendations],
-            keywords,
-        )
-        return CpcClassificationResponse(
-            recommended_codes=recommendations,
-            keywords=keywords,
-            google_patents_query=query,
-            notes=(
-                "Sugerencia preliminar basada en recuperacion semantica local. "
-                "Verifique manualmente la clasificacion y los resultados en Google Patents."
-            ),
-        )
+        return self._response(recommendations, keywords)
 
     def _fallback_response(
         self,
@@ -261,26 +298,19 @@ FORMATO:
     ) -> CpcClassificationResponse:
         selected = candidates[: min(top_k, 5)]
         recommendations = [
-            RecommendedCpcCode(
-                code=candidate.code,
-                title=candidate.title,
+            self._to_recommendation(
+                candidate,
                 reason=(
-                    "El texto recuperado para este codigo es semanticamente cercano: "
-                    f"{candidate.definition}"
+                    "Este codigo es semanticamente cercano a la descripcion. "
+                    f"Contexto CPC: {candidate.semantic_text}"
                 ),
                 confidence="high" if index < 2 else "medium" if index < 4 else "low",
-                retrieval_score=round(candidate.score, 4),
             )
             for index, candidate in enumerate(selected)
         ]
-        keywords = self.extract_keywords(description)
-        return CpcClassificationResponse(
-            recommended_codes=recommendations,
-            keywords=keywords,
-            google_patents_query=self.build_google_patents_query(
-                [item.code for item in recommendations],
-                keywords,
-            ),
+        return self._response(
+            recommendations,
+            self.extract_keywords(description),
             notes=(
                 "Gemini no estuvo disponible; se muestra un resultado de respaldo "
                 "basado unicamente en similitud semantica local."
@@ -288,14 +318,64 @@ FORMATO:
         )
 
     @staticmethod
+    def _to_recommendation(
+        candidate: CpcCandidate,
+        reason: str,
+        confidence: str,
+    ) -> RecommendedCpcCode:
+        return RecommendedCpcCode(
+            code=candidate.code,
+            title=candidate.title,
+            level=candidate.level,
+            classification_path=[
+                CpcClassificationPathItem(
+                    code=item.code,
+                    title=item.title,
+                    level=item.level,
+                )
+                for item in candidate.classification_path
+            ],
+            reason=reason,
+            confidence=confidence,
+            retrieval_score=round(candidate.score, 4),
+        )
+
+    @classmethod
+    def _response(
+        cls,
+        recommendations: list[RecommendedCpcCode],
+        keywords: list[str],
+        notes: str | None = None,
+    ) -> CpcClassificationResponse:
+        return CpcClassificationResponse(
+            recommended_codes=recommendations,
+            keywords=keywords,
+            google_patents_query=cls.build_google_patents_query(
+                [item.code for item in recommendations],
+                keywords,
+            ),
+            notes=notes or (
+                "Sugerencia preliminar basada en recuperacion semantica local. "
+                "Verifique manualmente la clasificacion y los resultados en Google Patents."
+            ),
+        )
+
+    @staticmethod
+    def _normalize_code(code: str) -> str:
+        return re.sub(r"\s+", "", code).upper()
+
+    @staticmethod
     def _clean_keywords(values: Any) -> list[str]:
         if not isinstance(values, list):
             return []
         clean: list[str] = []
+        seen: set[str] = set()
         for value in values:
             keyword = re.sub(r"\s+", " ", str(value)).strip(" \"'")
-            if keyword and keyword.lower() not in {item.lower() for item in clean}:
+            normalized = keyword.lower()
+            if keyword and normalized not in seen:
                 clean.append(keyword[:80])
+                seen.add(normalized)
             if len(clean) == 8:
                 break
         return clean
@@ -325,8 +405,6 @@ FORMATO:
         code_expression = f"({' OR '.join(clean_codes)})" if clean_codes else ""
         quoted_keywords = [f'"{keyword}"' for keyword in clean_keywords]
         keyword_expression = (
-            f"({' OR '.join(quoted_keywords)})"
-            if clean_keywords
-            else ""
+            f"({' OR '.join(quoted_keywords)})" if clean_keywords else ""
         )
         return " ".join(part for part in (code_expression, keyword_expression) if part)

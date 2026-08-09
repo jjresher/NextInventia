@@ -208,6 +208,25 @@ export default function CpcClassifier() {
                       <h3 className="mt-1 text-sm font-semibold text-slate-900">
                         {item.title}
                       </h3>
+                      {item.classification_path.length > 0 ? (
+                        <div
+                          className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500"
+                          aria-label="Ruta de clasificación"
+                        >
+                          {item.classification_path.map((path, pathIndex) => (
+                            <span key={path.code} className="flex items-center gap-1.5">
+                              {pathIndex > 0 ? (
+                                <span aria-hidden="true" className="text-slate-300">
+                                  /
+                                </span>
+                              ) : null}
+                              <span title={path.title} className="font-mono">
+                                {path.code}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <span

@@ -43,3 +43,6 @@ Desktop.ini
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Catalogo CPC completo e indice vectorial local
+backend/data/cpc_index/
