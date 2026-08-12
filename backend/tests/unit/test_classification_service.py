@@ -139,27 +139,25 @@ def test_gemini_codes_are_limited_to_retrieved_candidates(local_index, monkeypat
         "app.services.classification_service.encode_query",
         lambda _: query_vector(),
     )
-    response = MagicMock(
-        text=json.dumps(
-            {
-                "recommended_codes": [
-                    {
-                        "code": "F02D41/0002",
-                        "reason": "Usa control electronico.",
-                        "confidence": "high",
-                    },
-                    {
-                        "code": "G06N99/99",
-                        "reason": "Codigo inventado.",
-                        "confidence": "high",
-                    },
-                ],
-                "keywords": ["engine control", "sensor"],
-            }
-        )
+    response_text = json.dumps(
+        {
+            "recommended_codes": [
+                {
+                    "code": "F02D41/0002",
+                    "reason": "Usa control electronico.",
+                    "confidence": "high",
+                },
+                {
+                    "code": "G06N99/99",
+                    "reason": "Codigo inventado.",
+                    "confidence": "high",
+                },
+            ],
+            "keywords": ["engine control", "sensor"],
+        }
     )
     client = MagicMock()
-    client.models.generate_content.return_value = response
+    client.generate.return_value = response_text
     service = ClassificationService(*local_index, gemini_client=client)
 
     result = service.recommend("control electronico del motor", top_k=3)
@@ -176,7 +174,7 @@ def test_fallback_when_gemini_fails(local_index, monkeypatch):
         lambda _: query_vector(),
     )
     client = MagicMock()
-    client.models.generate_content.side_effect = RuntimeError("unavailable")
+    client.generate.side_effect = RuntimeError("unavailable")
     service = ClassificationService(*local_index, gemini_client=client)
 
     result = service.recommend("control electronico e inyeccion", top_k=2)

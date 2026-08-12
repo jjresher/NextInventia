@@ -9,7 +9,6 @@ from threading import Lock
 from typing import Any
 
 import numpy as np
-from google import genai
 from google.genai import types
 
 from app.config import settings
@@ -26,6 +25,7 @@ from app.services.cpc_catalog import (
     load_cpc_catalog,
 )
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME, encode_query
+from app.services.gemini_client import GeminiFallbackClient
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ class ClassificationService:
 
     def _get_gemini_client(self) -> Any:
         if self._gemini_client is None:
-            self._gemini_client = genai.Client(api_key=settings.gemini_api_key)
+            self._gemini_client = GeminiFallbackClient(api_key=settings.gemini_api_key)
         return self._gemini_client
 
     def _generate_with_gemini(
@@ -241,14 +241,13 @@ FORMATO:
 {{"recommended_codes":[{{"code":"F02D 41/00","reason":"...",
 "confidence":"high"}}],"keywords":["engine control"]}}"""
 
-        response = self._get_gemini_client().models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt,
+        text = self._get_gemini_client().generate(
+            prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
-        if not response.text:
+        if not text:
             raise ValueError("Gemini devolvio una respuesta vacia")
-        return json.loads(response.text)
+        return json.loads(text)
 
     def _validate_generated(
         self,
