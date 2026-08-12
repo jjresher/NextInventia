@@ -16,9 +16,17 @@ class CpcClassificationRequest(BaseModel):
         return value
 
 
+class CpcClassificationPathItem(BaseModel):
+    code: str
+    title: str
+    level: Literal["section", "class", "subclass", "main_group"]
+
+
 class RecommendedCpcCode(BaseModel):
     code: str
     title: str
+    level: Literal["main_group", "subgroup"] = "subgroup"
+    classification_path: list[CpcClassificationPathItem] = Field(default_factory=list)
     reason: str
     confidence: Literal["high", "medium", "low"]
     retrieval_score: float

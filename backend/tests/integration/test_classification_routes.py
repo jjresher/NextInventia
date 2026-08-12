@@ -1,9 +1,11 @@
 from app.dependencies import get_classification_service
 from app.main import app
 from app.models.classification import (
+    CpcClassificationPathItem,
     CpcClassificationResponse,
     RecommendedCpcCode,
 )
+from app.services.classification_service import CpcIndexError
 
 
 class FakeClassificationService:
@@ -13,6 +15,14 @@ class FakeClassificationService:
                 RecommendedCpcCode(
                     code="F02D 41/00",
                     title="Electrical control of combustion engines",
+                    level="main_group",
+                    classification_path=[
+                        CpcClassificationPathItem(
+                            code="F02D",
+                            title="Controlling combustion engines",
+                            level="subclass",
+                        )
+                    ],
                     reason=f"Aplica al control descrito: {description[:20]}",
                     confidence="high",
                     retrieval_score=0.78,
@@ -24,6 +34,11 @@ class FakeClassificationService:
             ),
             notes="Sugerencia preliminar.",
         )
+
+
+class MissingIndexService:
+    def recommend(self, description: str, top_k: int) -> CpcClassificationResponse:
+        raise CpcIndexError("Falta el indice CPC local")
 
 
 def test_recommend_cpc_happy_path(client):
@@ -40,6 +55,7 @@ def test_recommend_cpc_happy_path(client):
     assert response.status_code == 200
     body = response.json()
     assert body["recommended_codes"][0]["code"] == "F02D 41/00"
+    assert body["recommended_codes"][0]["classification_path"][0]["code"] == "F02D"
     assert "F02D41/00" in body["google_patents_query"]
 
 
@@ -63,6 +79,18 @@ def test_recommend_cpc_rejects_invalid_top_k(client):
     )
 
     assert response.status_code == 422
+
+
+def test_recommend_cpc_returns_503_when_index_is_missing(client):
+    app.dependency_overrides[get_classification_service] = MissingIndexService
+
+    response = client.post(
+        "/clasificacion/cpc/recommend",
+        json={"description": "Control electronico del motor", "top_k": 8},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Falta el indice CPC local"
 
 
 def test_cors_allows_local_network_frontend(client):
