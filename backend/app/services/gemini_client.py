@@ -20,6 +20,7 @@ from threading import Lock
 
 from google import genai
 from google.genai.errors import ClientError
+from google.genai.types import ContentListUnion
 
 
 # ---------------------------------------------------------------------------
@@ -111,9 +112,13 @@ class GeminiFallbackClient:
         """Útil para debug: muestra el uso actual de cada modelo en la cascada."""
         return [self._limiters[m.name].status() for m in self._cascade]
 
-    def generate(self, prompt: str, **generate_kwargs) -> str:
+    def generate(self, contents: ContentListUnion, **generate_kwargs) -> str:
         """
         Intenta generar contenido probando cada modelo de la cascada en orden.
+
+        `contents` acepta lo mismo que `generate_content` de google-genai: un
+        string simple (prompt de una sola vuelta) o una lista de `types.Content`
+        (historial multi-turno, como usa el chat).
 
         - Si un modelo ya agotó su cuota local (según nuestro conteo), se salta
           sin siquiera llamar a la API (ahorra una llamada perdida).
@@ -136,7 +141,7 @@ class GeminiFallbackClient:
             try:
                 response = self._client.models.generate_content(
                     model=model_limits.name,
-                    contents=prompt,
+                    contents=contents,
                     **generate_kwargs,
                 )
                 return response.text
