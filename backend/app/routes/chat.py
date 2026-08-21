@@ -1,18 +1,17 @@
 import logging
-import time
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from google import genai
 from google.genai import types
 from google.genai.errors import ClientError
 
 from app.config import settings
+from app.services.gemini_client import GeminiFallbackClient
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-_client = genai.Client(api_key=settings.gemini_api_key)
+_client = GeminiFallbackClient(api_key=settings.gemini_api_key)
 
 SYSTEM_PROMPT = """Eres PatentBot, un asistente especializado en patentes tecnológicas para la plataforma PatentScope.
 
@@ -116,20 +115,16 @@ def chat(req: ChatRequest):
     ]
     config = types.GenerateContentConfig(system_instruction=system_with_context)
 
-    for attempt in range(3):
-        try:
-            response = _client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=contents,
-                config=config,
-            )
-            return ChatResponse(reply=response.text)
-        except ClientError as e:
-            if "429" in str(e) and attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            logger.error("Gemini ClientError: %s", e)
-            raise HTTPException(status_code=502, detail="El asistente está ocupado, intenta en unos segundos.")
-        except Exception as e:
-            logger.error("Chat error: %s", e)
-            raise HTTPException(status_code=500, detail=str(e))
+    try:
+        reply = _client.generate(contents, config=config)
+    except (RuntimeError, ClientError) as e:
+        # RuntimeError: la cascada agoto la cuota de todos los modelos.
+        # ClientError: error real de la API (no de cuota, GeminiFallbackClient
+        # ya reintenta con el siguiente modelo ante un 429 real).
+        logger.error("Gemini error: %s", e)
+        raise HTTPException(status_code=502, detail="El asistente está ocupado, intenta en unos segundos.")
+    except Exception as e:
+        logger.error("Chat error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return ChatResponse(reply=reply)
