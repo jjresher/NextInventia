@@ -168,6 +168,35 @@ def test_gemini_codes_are_limited_to_retrieved_candidates(local_index, monkeypat
     assert "G06N99/99" not in result.google_patents_query
 
 
+def test_gemini_prompt_includes_selection_criteria_and_semantic_context(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.return_value = json.dumps(
+        {
+            "recommended_codes": [
+                {
+                    "code": "F02D 41/0002",
+                    "reason": "La descripcion respalda el control de admision.",
+                    "confidence": "high",
+                }
+            ],
+            "keywords": ["intake air control"],
+        }
+    )
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    service.recommend("control electronico de admision de aire", top_k=3)
+
+    prompt = client.generate.call_args.args[0]
+    assert "Basa la seleccion en evidencia tecnica explicita" in prompt
+    assert "Prefiere subgrupos especificos" in prompt
+    assert "semantic_context" in prompt
+    assert "Specific concept: Controlling intake air." in prompt
+
+
 def test_fallback_when_gemini_fails(local_index, monkeypatch):
     monkeypatch.setattr(
         "app.services.classification_service.encode_query",
