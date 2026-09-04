@@ -216,18 +216,27 @@ class ClassificationService:
                     {"code": path.code, "title": path.title, "level": path.level}
                     for path in item.classification_path
                 ],
+                "semantic_context": item.semantic_text,
                 "retrieval_score": round(item.score, 4),
             }
             for item in candidates
         ]
-        prompt = f"""Analiza la descripcion de una invencion y selecciona hasta {top_k} codigos CPC.
+        prompt = f"""Eres un clasificador CPC experto. Tu tarea es evaluar candidatos CPC ya recuperados por similitud semantica y seleccionar hasta {top_k} codigos que mejor describan la invencion.
 
 REGLAS:
 - Solo puedes devolver codigos presentes en CANDIDATOS.
 - No inventes ni completes codigos fuera de la lista.
-- Prefiere el codigo mas especifico respaldado por la descripcion.
-- Explica brevemente la relacion tecnica en espanol.
+- Basa la seleccion en evidencia tecnica explicita de la DESCRIPCION, no solo en el retrieval_score.
+- Prefiere subgrupos especificos sobre grupos principales cuando el subgrupo este claramente respaldado.
+- Usa un grupo principal solo si ningun subgrupo candidato captura con claridad la caracteristica tecnica central.
+- Evita codigos duplicados, demasiado generales o relacionados solo por palabras vagas.
+- Si varios candidatos son parecidos, elige el que coincida mejor con funcion tecnica, problema resuelto, componentes, proceso y campo de aplicacion.
+- Incluye solo codigos defendibles: es mejor devolver pocos codigos precisos que muchos debiles.
+- La razon debe mencionar la evidencia concreta de la descripcion que justifica el codigo.
 - confidence debe ser high, medium o low.
+  - high: la descripcion menciona claramente la funcion/estructura central del codigo.
+  - medium: hay correspondencia tecnica razonable pero falta algun detalle.
+  - low: solo hay indicios parciales; usalo con moderacion.
 - Extrae entre 3 y 8 keywords tecnicas, preferiblemente en ingles para Google Patents.
 - Devuelve exclusivamente JSON valido con las claves recommended_codes y keywords.
 
