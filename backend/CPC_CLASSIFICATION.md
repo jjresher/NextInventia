@@ -43,6 +43,7 @@ Gemini selecciona y explica → validación backend → respuesta JSON
 | `app/services/cpc_catalog.py` | Valida y carga `titles.csv`, interpreta niveles CPC, crea rutas jerárquicas y textos semánticos. |
 | `exel/index_cpc_codes.py` | Genera offline la matriz completa de embeddings y el manifest. |
 | `app/services/classification_service.py` | Carga el índice, recupera candidatos, consulta Gemini, valida y genera el fallback. |
+| `app/services/gemini_client.py` | Ejecuta la cascada de modelos Gemini y lleva los límites RPM/RPD en memoria. |
 | `app/models/classification.py` | Contratos Pydantic de request y response. |
 | `app/routes/classification.py` | Endpoint HTTP y conversión de errores de índice en respuesta 503. |
 | `tests/unit/test_cpc_indexer.py` | Pruebas del catálogo y del indexador. |
@@ -155,6 +156,25 @@ cambiar el contrato HTTP.
 
 ## Gemini y seguridad de la respuesta
 
+`GeminiFallbackClient` intenta los modelos configurados en `MODEL_CASCADE`, en
+este orden:
+
+1. `gemini-3.5-flash-lite`;
+2. `gemini-3.1-flash-lite`;
+3. `gemini-2.5-flash-lite`.
+
+Cada modelo tiene límites RPM y RPD configurados en el código. El cliente usa
+ventanas deslizantes en memoria y reserva una petición de forma atómica antes de
+enviarla. Si un modelo no tiene capacidad local o Google responde 429, continúa
+con el siguiente. Cualquier otro error de la API se propaga al servicio y activa
+el fallback local de la clasificación.
+
+Estos contadores no consultan la cuota real de Google, no se persisten y son
+independientes por instancia y proceso. El chat y la clasificación crean clientes
+separados, por lo que sus conteos tampoco se coordinan. Los valores de
+`MODEL_CASCADE` deben revisarse si cambian los modelos o las cuotas del proyecto
+de Google.
+
 Gemini recibe únicamente:
 
 - la descripción del usuario;
@@ -167,7 +187,9 @@ del código y descarta cualquier recomendación que no exista dentro de los 40
 candidatos. También elimina duplicados y limita el resultado a `top_k`.
 
 Si Gemini falla, devuelve JSON inválido o no selecciona ningún código válido,
-se utiliza un fallback con hasta cinco candidatos ordenados por similitud local.
+se utiliza un fallback con hasta cinco candidatos ordenados por similitud local,
+sin superar el `top_k` solicitado. La respuesta indica este caso en `notes` y
+genera palabras clave mediante extracción local.
 
 ## API
 
@@ -225,7 +247,9 @@ Errores relevantes:
 ## Ejecución y pruebas
 
 El backend necesita `SUPABASE_URL`, `SUPABASE_KEY` y `GEMINI_API_KEY` en `.env`
-aunque la recuperación CPC no consulte Supabase.
+aunque la recuperación CPC no consulte Supabase. La configuración carga `.env`
+desde el directorio de trabajo, por lo que estos comandos deben ejecutarse desde
+`backend/`.
 
 ```powershell
 cd backend
@@ -255,6 +279,9 @@ python -m pytest -q
 - No devolver códigos que Gemini haya inventado o que estén fuera del top local.
 - No generar embeddings del catálogo durante una petición HTTP.
 - Conservar el fallback local cuando Gemini no esté disponible.
+- Mantener actualizados los modelos y límites de `MODEL_CASCADE` según las cuotas
+  disponibles; no asumir que los contadores en memoria representan la cuota
+  global de Google.
 - Si cambia el formato de artefactos, incrementar `INDEX_VERSION` y regenerar el
   índice.
 - Los códigos CPC son sugerencias preliminares y requieren verificación humana.
