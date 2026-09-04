@@ -36,8 +36,26 @@ flowchart LR
 | Backend | FastAPI, Pydantic | API y coordinación de servicios |
 | Patentes | Supabase, PostgreSQL, pgvector | Persistencia, FTS, búsqueda semántica y similitud |
 | Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` | Vectores multilingües normalizados de 384 dimensiones |
-| Generación | Gemini 2.5 Flash Lite | Chat, selección final de CPC, razones y palabras clave |
+| Generación | Gemini con cascada de modelos | Chat, selección final de CPC, razones y palabras clave |
 | CPC | CSV + NumPy `memmap` | Recuperación vectorial plana de códigos CPC |
+
+### Modelos y respaldo de Gemini
+
+Chat y clasificación usan `backend/app/services/gemini_client.py`. El orden
+configurado en `MODEL_CASCADE` es `gemini-3.5-flash-lite`,
+`gemini-3.1-flash-lite` y `gemini-2.5-flash-lite`. El cliente pasa al siguiente
+modelo al alcanzar el límite local de peticiones o recibir un error 429.
+Otros errores de la API se propagan sin intentar el siguiente modelo.
+
+Los límites RPM/RPD son valores configurados en el código, no una consulta de la
+cuota disponible en Google. Los contadores viven en memoria por instancia del
+cliente; chat y clasificación tienen instancias separadas y tampoco comparten
+contadores entre procesos. Revise modelos y límites según el proyecto de Google
+utilizado.
+
+Si Gemini falla durante la clasificación, se devuelven hasta cinco candidatos
+locales (respetando `top_k`) y una explicación en `notes`. El chat no tiene una
+respuesta local de respaldo.
 
 ## Estructura del repositorio
 
@@ -78,7 +96,7 @@ Proyecto-patentes/
 ### 1. Clonar el repositorio
 
 ```powershell
-git clone <URL_DEL_REPOSITORIO>
+git clone https://github.com/jjresher/Proyecto-patentes.git
 cd Proyecto-patentes
 ```
 
@@ -113,7 +131,13 @@ pip install -r requirements-dev.txt
 
 ### 3. Configurar el backend
 
-Cree `backend/.env`:
+Desde `backend/`, copie la plantilla y complete las credenciales:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Configuración de `backend/.env`:
 
 ```dotenv
 SUPABASE_URL=https://TU_PROYECTO.supabase.co
@@ -133,6 +157,8 @@ Notas:
 - Para scripts de carga administrativa use una clave de Supabase con permisos
   suficientes. No exponga una `service_role` en el frontend ni en Git.
 - Los archivos `.env` están ignorados por Git.
+- Ejecute los comandos del backend desde `backend/`: la configuración busca
+  `.env` en el directorio de trabajo.
 
 ### 4. Preparar el índice CPC
 
@@ -223,6 +249,25 @@ npm run dev -- --hostname 0.0.0.0 --port 3000
 
 Abra <http://localhost:3000> o `http://IP_DE_LA_MAQUINA:3000`.
 
+La URL de la API debe ser accesible tanto desde el servidor Next.js como desde
+el navegador: el listado se consulta en el servidor, mientras que el chat y el
+clasificador hacen peticiones desde el navegador. En producción use HTTPS si el
+frontend también se sirve por HTTPS.
+
+## Uso de la aplicación
+
+| Ruta del frontend | Uso |
+| --- | --- |
+| `/` | Catálogo de 20 patentes por página; al buscar, hasta 20 resultados híbridos sin paginación |
+| `/patentes/{id}` | Detalle y patentes similares |
+| `/clasificar` | Descripción técnica, códigos CPC, ruta jerárquica y ecuación para Google Patents |
+| `/acerca` | Información del proyecto |
+
+El chat flotante usa el contexto de la búsqueda o de la patente abierta. El
+backend incluye como máximo 20 patentes en el contexto; en la vista de detalle
+añade hasta 4000 caracteres de descripción y 3000 de reivindicaciones. El
+frontend conserva el contexto de búsqueda en `sessionStorage` de la pestaña.
+
 ## Configuración de Supabase
 
 El repositorio asume que ya existe una tabla base llamada `patentes`. Las migraciones
@@ -246,6 +291,10 @@ Ejecute en el SQL Editor de Supabase, en este orden:
 1. `backend/migrations/001_enable_extensions_and_columns.sql`
 2. `backend/migrations/002_hybrid_search_function.sql`
 3. `backend/migrations/003_new_columns_and_unique_pn.sql`
+
+La migración 003 elimina filas con `pn` duplicado y conserva la de mayor `id`
+antes de crear la restricción única. Revise los duplicados y respalde los datos
+antes de aplicarla a una base existente.
 
 Las migraciones habilitan:
 
@@ -324,6 +373,23 @@ Este paso requiere que las patentes ya tengan embeddings.
 | `POST` | `/clasificacion/cpc/recommend` | Recomendación local de CPC y ecuación Google Patents |
 | `POST` | `/chat/` | Chat Gemini con contexto de patentes |
 
+Límites de entrada:
+
+| Operación | Parámetros |
+| --- | --- |
+| Listado | `page >= 1`; `page_size` de 1 a 200 (por defecto 50); `q` opcional, no vacío |
+| Búsqueda híbrida | `query` de 1 a 2000 caracteres; `top_k` de 1 a 100 (por defecto 20) |
+| Similares | `top_k` de 1 a 50 (por defecto 10) |
+| Clasificación CPC | `description` de 1 a 6000 caracteres, no solo espacios; `top_k` de 1 a 20 (por defecto 8) |
+
+El chat recibe `message`, `history` (mensajes con `role` y `content`) y
+`patents_context` (objetos de patentes); devuelve `reply`. Los dos últimos campos
+son opcionales. Consulte `/docs` para ver los contratos completos.
+
+`GET /` solo confirma que la API responde: no verifica Supabase, Gemini ni el
+índice CPC. La clasificación devuelve 503 cuando faltan artefactos del índice o
+no son compatibles; los parámetros que incumplen los contratos devuelven 422.
+
 Ejemplo de clasificación CPC:
 
 ```powershell
@@ -367,6 +433,9 @@ python -m ruff check app exel tests
 ```
 
 Los tests usan clientes falsos; no realizan llamadas reales a Supabase ni Gemini.
+La configuración de pruebas proporciona credenciales ficticias, por lo que no
+requiere un `.env` real. Estas pruebas no validan las cuotas ni los permisos de
+los servicios desplegados.
 
 Frontend, desde `frontend/`:
 
@@ -416,6 +485,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### Frontend
 
 - Configure `NEXT_PUBLIC_API_URL` antes de ejecutar `npm run build`.
+- Si cambia esa variable después del build, vuelva a compilar el frontend.
 - Ejecute `npm ci`, `npm run build` y `npm run start`.
 - Añada el dominio final del frontend a `FRONTEND_ORIGIN` en el backend.
 
@@ -484,3 +554,10 @@ iniciar otro build.
 - El catálogo CPC completo no se distribuye mediante Git.
 - La calidad depende del contenido y versión de `titles.csv`.
 - Gemini solo puede escoger entre los candidatos recuperados localmente.
+
+## Documentación adicional
+
+- [Frontend: ejecución, rutas y configuración](frontend/README.md).
+- [Clasificación CPC: índice, recuperación y contrato](backend/CPC_CLASSIFICATION.md).
+- [Auditoría de código](AUDITORIA_CODIGO.md): hallazgos de la revisión;
+  contraste su estado con el código actual.
