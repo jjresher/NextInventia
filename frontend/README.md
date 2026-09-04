@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend de Patentólogos
 
-## Getting Started
+Interfaz en español para buscar patentes, consultar detalles, conversar sobre
+resultados y recomendar códigos CPC. Usa Next.js 16.1.7 (App Router), React
+19.2.3, TypeScript y Tailwind CSS 4.
 
-First, run the development server:
+## Ejecución local
 
-```bash
+Desde `frontend/`:
+
+```powershell
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abra <http://localhost:3000>. El backend FastAPI debe estar disponible en
+`http://localhost:8000`. Consulte el [README principal](../README.md) para
+configurar Supabase, Gemini y el índice CPC.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Para otra dirección de backend, cree `frontend/.env.local`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
-## Learn More
+Esta variable es pública y debe contener únicamente la URL base de la API, sin
+barra final. Las credenciales de Supabase y Gemini se configuran en el backend.
+Reinicie el servidor de desarrollo después de modificarla; en producción,
+configúrela antes del build y vuelva a compilar si cambia.
 
-To learn more about Next.js, take a look at the following resources:
+El servidor Next.js consulta el catálogo y el navegador consulta el chat y el
+clasificador. Ambos deben poder acceder a la URL configurada. Para usar otra
+máquina de la red, sustituya `localhost` por la IP del backend y ejecute:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```powershell
+npm run dev -- --hostname 0.0.0.0 --port 3000
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Configure también CORS y la escucha de red del backend según el README principal.
 
-## Deploy on Vercel
+## Rutas y componentes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Ruta | Función |
+| --- | --- |
+| `/` | Catálogo paginado y búsqueda híbrida |
+| `/patentes/[id]` | Detalle y patentes similares |
+| `/clasificar` | Recomendaciones CPC y ecuación para Google Patents |
+| `/acerca` | Información del proyecto |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `src/lib/api.ts`: cliente HTTP y tipos de respuesta del backend.
+- `src/components/FloatingChat.tsx`: chat contextual disponible desde el layout.
+- `src/components/SearchContextStore.tsx`: contexto de búsqueda en `sessionStorage`.
+- `src/components/CpcClassifier.tsx`: formulario y resultados de clasificación.
+- `src/app/globals.css`: estilos globales.
+- `src/app/layout.tsx`: navegación, pie, chat y fuente Inter mediante `next/font`.
+
+Sin consulta, el catálogo muestra 20 patentes por página. Una búsqueda muestra
+hasta 20 resultados híbridos sin paginación. El chat toma el contexto de la
+búsqueda o de la patente abierta.
+
+## Verificación y producción
+
+```powershell
+npm run lint
+npm run build
+npm run start
+```
+
+`start` sirve el build de producción; requiere ejecutar `build` primero. No hay
+un script de pruebas automatizadas del frontend en `package.json`.
+
+El build utiliza `next/font/google` para Inter y necesita acceso al proveedor
+para descargar la fuente. Si el frontend se publica por HTTPS, configure una
+API HTTPS accesible desde el navegador y su origen en `FRONTEND_ORIGIN` del
+backend.
