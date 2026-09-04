@@ -96,7 +96,7 @@ Proyecto-patentes/
 ### 1. Clonar el repositorio
 
 ```powershell
-git clone https://github.com/jjresher/Proyecto-patentes.git
+git clone https://github.com/jjresher/NextInventia.git
 cd Proyecto-patentes
 ```
 
