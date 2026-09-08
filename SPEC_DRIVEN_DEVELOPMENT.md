@@ -28,7 +28,8 @@ repositorio tienen prioridad.
    producto y código actuales antes de crear un issue. Puede estar resuelto, haber
    cambiado, duplicar trabajo o necesitar división.
 3. **No implementar sin contrato.** Antes de modificar código deben estar claros el
-   problema, alcance, criterios de aceptación, exclusiones y forma de verificación.
+   problema, alcance, criterios de aceptación y forma de verificación. Registrar
+   exclusiones únicamente cuando eviten una ampliación probable del trabajo.
 4. **No ampliar el alcance silenciosamente.** Los hallazgos nuevos se documentan y,
    si requieren trabajo independiente, se convierten en otro issue enlazado.
 5. **Los criterios describen resultados, no intenciones.** Evitar expresiones como
@@ -39,6 +40,9 @@ repositorio tienen prioridad.
    parece correcto; ejecutar las comprobaciones pertinentes y registrar el resultado.
 8. **Seguridad y datos primero.** No ejecutar migraciones, seeds, rotaciones de claves
    ni acciones sobre producción como consecuencia automática de un issue.
+9. **Compacto por defecto.** Un issue contiene solo la información necesaria para
+   ejecutar y verificar su resultado. No repite comandos, políticas globales del
+   repositorio ni evidencia que ya quedó resumida con una referencia precisa.
 
 ---
 
@@ -181,7 +185,7 @@ Interpretación de prioridad:
 
 ---
 
-## 5. Plantilla obligatoria de Issue
+## 5. Plantilla compacta de Issue
 
 ### Título
 
@@ -204,54 +208,68 @@ No incluir estado, nombre de rama ni palabras vagas como “varios”, “mejora
 “arreglos”. La referencia de origen pertenece al cuerpo, no tiene que dominar el
 título.
 
-### Cuerpo
+### Criterios de compactación
+
+- Usar por defecto cuatro secciones: **Problema**, **Alcance**, **Criterios de
+  aceptación** y **Verificación**.
+- Integrar en **Problema** el contexto, la evidencia mínima y la referencia al origen.
+  No crear secciones separadas de contexto, evidencia o resultado esperado cuando
+  repitan la misma información.
+- Incluir entre **3 y 5 criterios de aceptación** siempre que sea posible. Si hacen
+  falta más de 5, revisar si existen duplicados, detalles de verificación o más de una
+  unidad de trabajo que deba dividirse.
+- Cada criterio debe comprobar una dimensión distinta del resultado. Los comandos y
+  pasos para demostrarlo pertenecen a **Verificación**, no deben repetirse como una
+  segunda lista equivalente.
+- No copiar políticas universales ya definidas en `AGENTS.md`, como evitar secretos,
+  dependencias instaladas, cachés o artefactos generados, salvo que constituyan un
+  riesgo específico del trabajo.
+- Añadir **Fuera de alcance**, **Riesgos y reversión**, **Dependencias** o
+  **Decisiones pendientes** solo cuando contengan información material. Omitir el
+  bloque completo en vez de escribir “Ninguna” o “No aplica”.
+- Preferir una referencia precisa al documento, hallazgo o issue de origen antes que
+  copiar toda su explicación. La evidencia debe seguir siendo suficiente para validar
+  que el problema existe.
+
+### Cuerpo base
 
 Copiar y completar:
 
 ```md
-## Contexto
-
-Qué parte del producto o sistema está implicada.
-
 ## Problema
 
-Qué ocurre hoy, para quién y por qué importa. Separar hechos de hipótesis.
-
-## Evidencia
-
-- Archivo, símbolo, endpoint, salida o pasos de reproducción.
-- Estado y commit donde se verificó.
-- Origen: documento, conversación, diseño, reporte o issue del que procede.
-
-## Resultado esperado
-
-Comportamiento observable que debe existir al terminar.
+Qué ocurre hoy, por qué importa y cuál es la evidencia mínima. Separar hechos de
+hipótesis e incluir el origen y estado verificado cuando corresponda.
 
 ## Alcance
 
-- Componentes que se espera modificar.
-- Cambios de datos, contratos o configuración incluidos.
-
-## Fuera de alcance
-
-- Mejoras relacionadas que no pertenecen a este issue.
+- Resultado concreto que debe producirse.
+- Componentes, contratos, datos o configuración incluidos.
 
 ## Criterios de aceptación
 
-- [ ] Criterio observable y verificable.
-- [ ] Casos de error y límites relevantes cubiertos.
-- [ ] Pruebas o evidencia añadidas.
-- [ ] Documentación/configuración actualizada cuando corresponda.
-- [ ] No se introducen secretos ni datos sensibles en código, logs o artefactos.
+- [ ] Resultado principal observable y verificable.
+- [ ] Caso de error, límite o compatibilidad relevante.
+- [ ] Calidad o evidencia necesaria para aceptar el cambio.
 
 ## Verificación
 
 Comandos, pruebas manuales, métricas o consultas de solo lectura que demuestran el
 resultado. Indicar requisitos de entorno.
+```
+
+### Bloques opcionales
+
+Añadir únicamente los que aporten una restricción o decisión necesaria:
+
+```md
+## Fuera de alcance
+
+- Trabajo relacionado que podría confundirse razonablemente con este issue.
 
 ## Riesgos y reversión
 
-Riesgos de desplegar el cambio y forma concreta de revertirlo.
+Riesgo material de implementar o desplegar el cambio y forma concreta de revertirlo.
 
 ## Dependencias
 
@@ -261,19 +279,21 @@ Riesgos de desplegar el cambio y forma concreta de revertirlo.
 
 ## Decisiones pendientes
 
-Preguntas que requieren al responsable del producto, seguridad o infraestructura.
-Si no hay ninguna, escribir “Ninguna”.
+Preguntas materiales que requieren al responsable del producto, seguridad o
+infraestructura antes de implementar.
 ```
 
-Un issue no recibe `agent-ready` hasta que “Decisiones pendientes” sea “Ninguna”,
-las dependencias estén resueltas y la verificación pueda ejecutarse sin adivinar.
+Un issue no recibe `agent-ready` mientras tenga decisiones materiales pendientes,
+dependencias bloqueantes sin resolver o una verificación que requiera adivinar. La
+ausencia de los bloques opcionales significa que no se identificaron restricciones
+materiales de ese tipo.
 
 ---
 
 ## 6. Reglas especiales para funcionalidades nuevas
 
 Una funcionalidad debe especificar comportamiento, no una solución prematura. Además
-de la plantilla anterior, incluir:
+de la plantilla anterior, incluir solo cuando sea material para implementarla:
 
 - usuario o actor beneficiado;
 - escenario principal y estados vacíos/error;
@@ -526,7 +546,8 @@ Un issue está listo para implementación cuando:
 
 - [ ] el problema fue validado contra la rama actual;
 - [ ] tiene un único resultado principal;
-- [ ] alcance y fuera de alcance están definidos;
+- [ ] el alcance está definido y las exclusiones materiales están registradas, si
+      existen;
 - [ ] los criterios son observables;
 - [ ] la estrategia de pruebas es viable;
 - [ ] las dependencias están enlazadas y resueltas;
@@ -563,6 +584,9 @@ Un issue está terminado cuando:
 - Convertir comentarios del PR en requisitos secretos que nunca llegan al issue.
 - Usar el roadmap como bitácora infinita de todo lo descubierto.
 - Permitir que un agente seleccione trabajo solo por ser el primer checkbox pendiente.
+- Repetir los mismos resultados en contexto, alcance, criterios y verificación.
+- Copiar reglas globales de `AGENTS.md` en cada lista de aceptación.
+- Añadir secciones vacías o más criterios de los necesarios para aparentar precisión.
 
 ---
 
