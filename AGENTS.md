@@ -22,7 +22,7 @@ For changes spanning multiple areas, read every applicable guide before editing.
 
 When the user explicitly invokes “Spec-Driven Development”, “SDD”, “crear el spec”, “especificar esta funcionalidad”, or “convertir esto en issues”, read and apply [SPEC_DRIVEN_DEVELOPMENT.md](SPEC_DRIVEN_DEVELOPMENT.md) before acting.
 
-Invoking SDD authorizes analysis and spec drafting only. Create or modify GitHub resources, implement code, push, open a pull request, or merge only when the user explicitly requests that action. Never merge without explicit authorization.
+Invoking SDD authorizes analysis, spec drafting, and automatic issue creation through `gh`, unless the user requests a draft only. Implementation, branches, commits, pushes, pull requests, and deployment still require an explicit request. Every merge into `main`, including `develop` → `main`, requires explicit user approval.
 
 Do not activate SDD automatically for ordinary ideas, questions, reviews, or implementation requests.
 
