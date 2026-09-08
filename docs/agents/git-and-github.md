@@ -12,7 +12,7 @@ Applies when the user asks for branches, commits, pushes, issues, pull requests,
 
 ## Publishing
 
-Creating or modifying issues, labels, milestones, branches, commits, pushes, or pull requests requires an explicit user request for that action. Local implementation does not imply permission to publish it.
+Creating or modifying issues, labels, or milestones requires an explicit request, except when SDD is invoked: SDD authorizes automatic issue creation through `gh` unless the user asks for a draft only. Branches, commits, pushes, and pull requests still require an explicit request. Local implementation does not imply permission to publish it.
 
 Before pushing or opening a pull request:
 
@@ -22,6 +22,6 @@ Before pushing or opening a pull request:
 4. Link the issue and record verification evidence in the pull request.
 5. Use a draft pull request when the work is incomplete.
 
-Do not merge without explicit user authorization. Even with authorization, do not merge while required CI fails, acceptance criteria remain incomplete, review threads or decisions are unresolved, blocking dependencies are open, or a migration lacks a safe execution and rollback plan.
+Every merge into `main`, including `develop` → `main`, requires explicit user authorization and must never be automatic. For other target branches, follow the workflow requested by the user. Do not merge while required CI fails, acceptance criteria remain incomplete, review threads or decisions are unresolved, blocking dependencies are open, or a migration lacks a safe execution and rollback plan.
 
 Do not rewrite shared history or use destructive Git operations unless the user explicitly requests the exact operation.
