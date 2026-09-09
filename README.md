@@ -431,6 +431,9 @@ python -m pytest -q
 
 # Estilo de Python
 python -m ruff check app exel tests
+
+# Auditoría de dependencias de producción
+python -m pip_audit -r requirements.txt
 ```
 
 Los tests usan clientes falsos; no realizan llamadas reales a Supabase ni Gemini.
@@ -443,7 +446,13 @@ Frontend, desde `frontend/`:
 ```powershell
 npm run lint
 npm run build
+npm run test:e2e
+npm audit --omit=dev --audit-level=high
 ```
+
+El workflow `.github/workflows/ci.yml` ejecuta estos checks en cada pull request,
+usa servicios falsos para los smoke tests E2E y analiza secretos con Gitleaks. No
+requiere credenciales reales de Supabase ni Gemini.
 
 Para probar el build de producción:
 

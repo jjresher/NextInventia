@@ -1,7 +1,8 @@
 from unittest.mock import MagicMock
 
-import app.routes.chat as chat_module
 from google.genai.errors import ClientError
+
+import app.routes.chat as chat_module
 
 
 def test_chat_happy_path(client, monkeypatch):

@@ -221,16 +221,22 @@ class ClassificationService:
             }
             for item in candidates
         ]
-        prompt = f"""Eres un clasificador CPC experto. Tu tarea es evaluar candidatos CPC ya recuperados por similitud semantica y seleccionar hasta {top_k} codigos que mejor describan la invencion.
+        prompt = f"""Eres un clasificador CPC experto. Evalua los candidatos ya
+recuperados por similitud semantica y selecciona hasta {top_k} codigos que mejor
+describan la invencion.
 
 REGLAS:
 - Solo puedes devolver codigos presentes en CANDIDATOS.
 - No inventes ni completes codigos fuera de la lista.
-- Basa la seleccion en evidencia tecnica explicita de la DESCRIPCION, no solo en el retrieval_score.
-- Prefiere subgrupos especificos sobre grupos principales cuando el subgrupo este claramente respaldado.
-- Usa un grupo principal solo si ningun subgrupo candidato captura con claridad la caracteristica tecnica central.
+- Basa la seleccion en evidencia tecnica explicita de la DESCRIPCION, no solo en
+  el retrieval_score.
+- Prefiere subgrupos especificos sobre grupos principales cuando el subgrupo este
+  claramente respaldado.
+- Usa un grupo principal solo si ningun subgrupo candidato captura con claridad la
+  caracteristica tecnica central.
 - Evita codigos duplicados, demasiado generales o relacionados solo por palabras vagas.
-- Si varios candidatos son parecidos, elige el que coincida mejor con funcion tecnica, problema resuelto, componentes, proceso y campo de aplicacion.
+- Si varios candidatos son parecidos, elige el que coincida mejor con funcion
+  tecnica, problema resuelto, componentes, proceso y campo de aplicacion.
 - Incluye solo codigos defendibles: es mejor devolver pocos codigos precisos que muchos debiles.
 - La razon debe mencionar la evidencia concreta de la descripcion que justifica el codigo.
 - confidence debe ser high, medium o low.
