@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.services.patent_service import PatentService
+from app.services.patent_service import ALL_COLUMNS, SUMMARY_COLUMNS, PatentService
 
 # Importar datos de muestra desde conftest (disponibles automáticamente)
 # PATENT_SAMPLE y PATENT_LIST los inyecta conftest.py via el fixture mock_supabase
@@ -145,6 +145,40 @@ class TestGetById:
                        .select.return_value
                        .eq)
         eq_call.assert_called_once_with("id", 42)
+
+
+class TestGetByIds:
+
+    def test_get_by_ids_retorna_datos_en_el_orden_solicitado(self, mock_supabase):
+        response = MagicMock(data=[{"id": 2}, {"id": 1}])
+        query = mock_supabase.table.return_value.select.return_value
+        query.in_.return_value.execute.return_value = response
+
+        result = PatentService(mock_supabase).get_by_ids([1, 2])
+
+        assert result == [{"id": 1}, {"id": 2}]
+        mock_supabase.table.return_value.select.assert_called_once_with(
+            SUMMARY_COLUMNS
+        )
+        mock_supabase.table.return_value.select.return_value.in_.assert_called_once_with(
+            "id", [1, 2]
+        )
+
+    def test_get_by_ids_usa_detalle_completo_para_una_patente(self, mock_supabase):
+        response = MagicMock(data=[{"id": 1, "descripcion": "detalle"}])
+        query = mock_supabase.table.return_value.select.return_value
+        query.in_.return_value.execute.return_value = response
+
+        result = PatentService(mock_supabase).get_by_ids([1])
+
+        assert result == [{"id": 1, "descripcion": "detalle"}]
+        mock_supabase.table.return_value.select.assert_called_once_with(ALL_COLUMNS)
+
+    def test_get_by_ids_no_consulta_cuando_la_lista_esta_vacia(self, mock_supabase):
+        result = PatentService(mock_supabase).get_by_ids([])
+
+        assert result == []
+        mock_supabase.table.assert_not_called()
 
 
 # ===========================================================================

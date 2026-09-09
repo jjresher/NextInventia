@@ -40,6 +40,20 @@ class PatentService:
         )
         return resp.data
 
+    def get_by_ids(self, patent_ids: list[int]) -> list[dict]:
+        """Obtiene patentes completas conservando el orden solicitado."""
+        if not patent_ids:
+            return []
+        columns = ALL_COLUMNS if len(patent_ids) == 1 else SUMMARY_COLUMNS
+        resp = (
+            self._client.table(self._table)
+            .select(columns)
+            .in_("id", patent_ids)
+            .execute()
+        )
+        by_id = {row.get("id"): row for row in (resp.data or [])}
+        return [by_id[item] for item in patent_ids if item in by_id]
+
     def search(self, query: str, page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
         """Búsqueda léxica parametrizada, sin interpolar texto en filtros.
 
