@@ -1,7 +1,7 @@
 # Frontend de Patentólogos
 
 Interfaz en español para buscar patentes, consultar detalles, conversar sobre
-resultados y recomendar códigos CPC. Usa Next.js 16.1.7 (App Router), React
+resultados y recomendar códigos CPC. Usa Next.js 16.3.4 (App Router), React
 19.2.3, TypeScript y Tailwind CSS 4.
 
 ## Ejecución local
