@@ -266,7 +266,8 @@ frontend también se sirve por HTTPS.
 El chat flotante usa el contexto de la búsqueda o de la patente abierta. El
 backend incluye como máximo 20 patentes en el contexto; en la vista de detalle
 añade hasta 4000 caracteres de descripción y 3000 de reivindicaciones. El
-frontend conserva el contexto de búsqueda en `sessionStorage` de la pestaña.
+frontend conserva en `sessionStorage` solamente una versión del formato, la
+consulta y los IDs de contexto; no duplica abstracts, descripciones ni claims.
 
 ## Configuración de Supabase
 
@@ -383,9 +384,11 @@ Límites de entrada:
 | Similares | `top_k` de 1 a 50 (por defecto 10) |
 | Clasificación CPC | `description` de 1 a 6000 caracteres, no solo espacios; `top_k` de 1 a 20 (por defecto 8) |
 
-El chat recibe `message`, `history` (mensajes con `role` y `content`) y
-`patents_context` (objetos de patentes); devuelve `reply`. Los dos últimos campos
-son opcionales. Consulte `/docs` para ver los contratos completos.
+El chat recibe `message`, `history` (hasta 12 mensajes con roles `user` o `model`)
+y `patent_ids` (hasta 20 enteros positivos); devuelve `reply`. Los dos últimos
+campos son opcionales. El servidor rehidrata las patentes desde Supabase y aplica
+presupuestos de longitud antes de llamar a Gemini. Consulte `/docs` para ver los
+contratos completos.
 
 `GET /` solo confirma que la API responde: no verifica Supabase, Gemini ni el
 índice CPC. La clasificación devuelve 503 cuando faltan artefactos del índice o
@@ -444,6 +447,7 @@ los servicios desplegados.
 Frontend, desde `frontend/`:
 
 ```powershell
+npm test
 npm run lint
 npm run build
 npm run test:e2e

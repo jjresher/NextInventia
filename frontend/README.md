@@ -56,17 +56,20 @@ Configure también CORS y la escucha de red del backend según el README princip
 
 Sin consulta, el catálogo muestra 20 patentes por página. Una búsqueda muestra
 hasta 20 resultados híbridos sin paginación. El chat toma el contexto de la
-búsqueda o de la patente abierta.
+búsqueda o de la patente abierta. En `sessionStorage` guarda un objeto versionado
+con la consulta y los IDs; el backend rehidrata los datos antes de llamar al modelo.
 
 ## Verificación y producción
 
 ```powershell
 npm run lint
+npm test
 npm run build
 npm run test:e2e
 npm run start
 ```
 
+`test` cubre la persistencia y rehidratación segura del contexto del chat.
 `test:e2e` levanta el build y una API falsa local para verificar catálogo, detalle,
 chat y clasificación sin consumir Supabase ni Gemini. `start` sirve el build de
 producción y requiere ejecutar `build` primero.

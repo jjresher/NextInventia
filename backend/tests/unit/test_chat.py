@@ -1,4 +1,4 @@
-from app.routes.chat import _build_context_block
+from app.routes.chat import MAX_PATENT_CONTEXT_CHARS, _build_context_block
 
 
 def test_context_block_empty_when_no_patents():
@@ -62,3 +62,14 @@ def test_context_block_falls_back_to_legacy_columns():
     assert "Solicitante: US" in block
     assert "Tema: granted" in block
     assert "Estado: active" in block
+
+
+def test_context_block_respects_total_character_budget():
+    patents = [
+        {"id": item, "pn": f"US{item}", "ti": "t" * 1000, "ab": "a" * 500}
+        for item in range(1, 21)
+    ]
+
+    block = _build_context_block(patents)
+
+    assert len(block) == MAX_PATENT_CONTEXT_CHARS

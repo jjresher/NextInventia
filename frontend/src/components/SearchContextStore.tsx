@@ -1,16 +1,24 @@
 "use client";
 
 import { useEffect } from "react";
+import {
+  CHAT_CONTEXT_KEY,
+  createChatContext,
+  removeLegacyChatContext,
+} from "@/lib/chatContext.mjs";
 
 interface Props {
   query: string;
-  patents: object[];
+  patents: Array<{ id: number }>;
 }
 
 export default function SearchContextStore({ query, patents }: Props) {
   useEffect(() => {
-    sessionStorage.setItem("chat_context_query", query);
-    sessionStorage.setItem("chat_context_patents", JSON.stringify(patents));
+    removeLegacyChatContext(sessionStorage);
+    sessionStorage.setItem(
+      CHAT_CONTEXT_KEY,
+      JSON.stringify(createChatContext(query, patents))
+    );
   }, [query, patents]);
 
   return null;
