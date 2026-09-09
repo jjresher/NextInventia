@@ -9,8 +9,10 @@ agregando los casos que faltan para cumplir la rúbrica:
 No usa FastAPI ni HTTP — prueba PatentService directamente.
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from app.services.patent_service import PatentService
 
 # Importar datos de muestra desde conftest (disponibles automáticamente)
@@ -151,27 +153,25 @@ class TestGetById:
 
 class TestSearch:
 
+    @staticmethod
+    def configure_search_response(mock_supabase, data=None, count=0):
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock(
+            data={"data": data or [], "count": count}
+        )
+
     def test_search_retorna_resultados_cuando_hay_coincidencias(self, mock_supabase):
         """Happy path: query con matches → devuelve (lista, total) con datos."""
+        self.configure_search_response(mock_supabase, [{"id": 1}], 1)
         service = PatentService(mock_supabase)
 
         data, total = service.search("autonomous vehicle")
 
-        assert isinstance(data, list)
-        assert isinstance(total, int)
+        assert data == [{"id": 1}]
+        assert total == 1
 
     def test_search_retorna_lista_vacia_cuando_no_hay_coincidencias(self, mock_supabase):
         """Flujo alternativo: query sin matches → ([], 0) sin excepción."""
-        (mock_supabase.table.return_value
-             .select.return_value
-             .or_.return_value
-             .execute.return_value) = MagicMock(count=0)
-        (mock_supabase.table.return_value
-             .select.return_value
-             .or_.return_value
-             .order.return_value
-             .range.return_value
-             .execute.return_value) = MagicMock(data=[])
+        self.configure_search_response(mock_supabase)
 
         service = PatentService(mock_supabase)
         data, total = service.search("xyzterminoinexistente123")
@@ -179,31 +179,21 @@ class TestSearch:
         assert data == []
         assert total == 0
 
-    def test_search_filtra_por_ti_ab_y_pn(self, mock_supabase):
-        """El filtro OR debe incluir los campos ti, ab y pn."""
+    def test_search_usa_rpc_parametrizada(self, mock_supabase):
+        """El texto viaja como parámetro y no como expresión PostgREST."""
+        self.configure_search_response(mock_supabase)
         service = PatentService(mock_supabase)
-        service.search("motor electrico")
+        service.search("motor electrico", page=2, page_size=10)
 
-        or_call = (mock_supabase.table.return_value
-                       .select.return_value
-                       .or_)
-        or_call.assert_called()
-        filter_arg = or_call.call_args[0][0]
-        assert "ti.ilike" in filter_arg
-        assert "ab.ilike" in filter_arg
-        assert "pn.ilike" in filter_arg
-
-    def test_search_incluye_el_termino_en_el_filtro(self, mock_supabase):
-        """El término buscado debe estar presente dentro del filtro OR."""
-        termino = "vehiculo autonomo"
-        service = PatentService(mock_supabase)
-        service.search(termino)
-
-        or_call = (mock_supabase.table.return_value
-                       .select.return_value
-                       .or_)
-        filter_arg = or_call.call_args[0][0]
-        assert termino in filter_arg
+        mock_supabase.rpc.assert_called_once_with(
+            "search_patentes_lexical",
+            {
+                "query_text": "motor electrico",
+                "requested_page": 2,
+                "requested_page_size": 10,
+            },
+        )
+        mock_supabase.table.assert_not_called()
 
     @pytest.mark.parametrize("query", [
         "US10123456B2",        # número exacto de patente
@@ -213,8 +203,23 @@ class TestSearch:
     ])
     def test_search_acepta_distintos_formatos_de_query(self, mock_supabase, query):
         """Escenarios: distintos formatos de entrada no deben lanzar excepción."""
+        self.configure_search_response(mock_supabase)
         service = PatentService(mock_supabase)
         data, total = service.search(query)
 
         assert isinstance(data, list)
         assert isinstance(total, int)
+
+    @pytest.mark.parametrize("query", [
+        "),id.gt.0",
+        "100%_eléctrico",
+        'motor\"),(id.gt.0',
+        "barra\\invertida",
+    ])
+    def test_search_envia_entradas_adversariales_como_parametros(
+        self, mock_supabase, query
+    ):
+        self.configure_search_response(mock_supabase)
+        PatentService(mock_supabase).search(query)
+
+        assert mock_supabase.rpc.call_args.args[1]["query_text"] == query

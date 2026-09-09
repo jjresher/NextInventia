@@ -291,6 +291,7 @@ Ejecute en el SQL Editor de Supabase, en este orden:
 1. `backend/migrations/001_enable_extensions_and_columns.sql`
 2. `backend/migrations/002_hybrid_search_function.sql`
 3. `backend/migrations/003_new_columns_and_unique_pn.sql`
+4. `backend/migrations/004_parameterized_lexical_search.sql`
 
 La migración 003 elimina filas con `pn` duplicado y conserva la de mayor `id`
 antes de crear la restricción única. Revise los duplicados y respalde los datos
@@ -377,7 +378,7 @@ Límites de entrada:
 
 | Operación | Parámetros |
 | --- | --- |
-| Listado | `page >= 1`; `page_size` de 1 a 200 (por defecto 50); `q` opcional, no vacío |
+| Listado | `page >= 1`; `page_size` de 1 a 200 (por defecto 50); `q` opcional, de 1 a 200 caracteres y no solo espacios |
 | Búsqueda híbrida | `query` de 1 a 2000 caracteres; `top_k` de 1 a 100 (por defecto 20) |
 | Similares | `top_k` de 1 a 50 (por defecto 10) |
 | Clasificación CPC | `description` de 1 a 6000 caracteres, no solo espacios; `top_k` de 1 a 20 (por defecto 8) |
@@ -516,8 +517,9 @@ consultas reutilizan el modelo en memoria.
 
 ### RPC de Supabase inexistente
 
-Ejecute las migraciones 001, 002 y 003 en orden. Verifique que las funciones
-`search_patentes_hybrid` y `patentes_similares` existan en Supabase.
+Ejecute las migraciones 001, 002, 003 y 004 en orden. Verifique que las funciones
+`search_patentes_hybrid`, `patentes_similares` y `search_patentes_lexical` existan
+en Supabase.
 
 ### Gemini devuelve 429 o 502
 
