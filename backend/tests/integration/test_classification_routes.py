@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from app.dependencies import get_classification_service
 from app.main import app
 from app.models.classification import (
@@ -38,7 +40,7 @@ class FakeClassificationService:
 
 class MissingIndexService:
     def recommend(self, description: str, top_k: int) -> CpcClassificationResponse:
-        raise CpcIndexError("Falta el indice CPC local")
+        raise CpcIndexError("C:/private/index.npy api_key=secret")
 
 
 def test_recommend_cpc_happy_path(client):
@@ -90,7 +92,22 @@ def test_recommend_cpc_returns_503_when_index_is_missing(client):
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Falta el indice CPC local"
+    body = response.json()
+    assert body["detail"] == "El índice CPC no está disponible."
+    assert body["code"] == "CPC_INDEX_UNAVAILABLE"
+    assert body["correlation_id"] == response.headers["x-correlation-id"]
+    assert "private" not in response.text
+    assert "secret" not in response.text
+
+
+def test_success_response_propagates_a_unique_correlation_id(client):
+    first = client.get("/", headers={"Origin": "http://localhost:3000"})
+    second = client.get("/")
+
+    UUID(first.headers["x-correlation-id"])
+    UUID(second.headers["x-correlation-id"])
+    assert first.headers["x-correlation-id"] != second.headers["x-correlation-id"]
+    assert first.headers["access-control-expose-headers"] == "X-Correlation-ID"
 
 
 def test_cors_allows_local_network_frontend(client):
