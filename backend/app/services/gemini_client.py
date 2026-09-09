@@ -22,7 +22,6 @@ from google import genai
 from google.genai.errors import ClientError
 from google.genai.types import ContentListUnion
 
-
 # ---------------------------------------------------------------------------
 # Configuración de límites reales por modelo (free tier)
 # Ajustar estos valores si Google cambia las cuotas.

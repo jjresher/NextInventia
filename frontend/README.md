@@ -65,11 +65,14 @@ con la consulta y los IDs; el backend rehidrata los datos antes de llamar al mod
 npm run lint
 npm test
 npm run build
+npm run test:e2e
 npm run start
 ```
 
-`start` sirve el build de producción; requiere ejecutar `build` primero. No hay
-un script de pruebas automatizadas del frontend en `package.json`.
+`test` cubre la persistencia y rehidratación segura del contexto del chat.
+`test:e2e` levanta el build y una API falsa local para verificar catálogo, detalle,
+chat y clasificación sin consumir Supabase ni Gemini. `start` sirve el build de
+producción y requiere ejecutar `build` primero.
 
 El build utiliza `next/font/google` para Inter y necesita acceso al proveedor
 para descargar la fuente. Si el frontend se publica por HTTPS, configure una

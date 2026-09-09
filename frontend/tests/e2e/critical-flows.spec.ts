@@ -1,0 +1,29 @@
+import { expect, test } from "@playwright/test";
+
+test("muestra el catálogo servido por la API falsa", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Buscador de Patentes" })).toBeVisible();
+  await expect(page.getByText("Patente de prueba")).toBeVisible();
+});
+
+test("abre una patente y conversa sin servicios reales", async ({ page }) => {
+  await page.goto("/patentes/1");
+  await expect(page.getByRole("heading", { name: "Patente de prueba" })).toBeVisible();
+
+  await page.getByRole("button", { name: "PatentBot" }).click();
+  await page.getByPlaceholder("Pregunta sobre estas patentes...").fill("¿De qué trata?");
+  await page.getByPlaceholder("Pregunta sobre estas patentes...").press("Enter");
+
+  await expect(page.getByText("Respuesta del chat falso.")).toBeVisible();
+});
+
+test("clasifica una descripción mediante la API falsa", async ({ page }) => {
+  await page.goto("/clasificar");
+  await page.getByPlaceholder(/sistema electrónico/).fill(
+    "Sistema electrónico para controlar la inyección de combustible del motor."
+  );
+  await page.getByRole("button", { name: "Analizar clasificación CPC" }).click();
+
+  await expect(page.getByText("F02D 41/00")).toBeVisible();
+});

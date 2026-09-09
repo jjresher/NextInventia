@@ -191,10 +191,10 @@ def print_summary(ids: list[int], labels: np.ndarray, titles: dict[int, str], k:
 
 
 def main() -> None:
-    print(f"Conectando a Supabase y descargando embeddings...")
+    print("Conectando a Supabase y descargando embeddings...")
     client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    ids, X, titles = fetch_all_embeddings(client)
+    ids, embeddings, titles = fetch_all_embeddings(client)
     n = len(ids)
     if n == 0:
         print("No hay patentes con embedding. Corre primero generate_embeddings.py.")
@@ -202,7 +202,7 @@ def main() -> None:
     if n < K:
         raise SystemExit(f"N ({n}) < K ({K}). Reduce KMEANS_K o genera más embeddings.")
 
-    print(f"Embeddings cargados: shape={X.shape}, K={K}")
+    print(f"Embeddings cargados: shape={embeddings.shape}, K={K}")
 
     if n >= MINIBATCH_THRESHOLD:
         print("Usando MiniBatchKMeans (N grande)")
@@ -211,7 +211,7 @@ def main() -> None:
         model = KMeans(n_clusters=K, random_state=42, n_init="auto")
 
     print("Entrenando K-means...")
-    labels = model.fit_predict(X)
+    labels = model.fit_predict(embeddings)
     print(f"Inercia: {model.inertia_:.2f}")
 
     print("Subiendo etiquetas a Supabase...")
