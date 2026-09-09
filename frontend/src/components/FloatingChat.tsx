@@ -5,6 +5,11 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send, ChevronDown, Bot, User, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
+import {
+  buildChatHistory,
+  readChatContext,
+  removeLegacyChatContext,
+} from "@/lib/chatContext.mjs";
 
 interface Message {
   role: "user" | "model";
@@ -25,17 +30,21 @@ interface PatentContext {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-function welcomeMessage(patents: PatentContext[], contextLabel: string): Message {
-  if (patents.length === 1) {
+function welcomeMessage(
+  patentCount: number,
+  contextLabel: string,
+  patent?: PatentContext
+): Message {
+  if (patentCount === 1 && patent) {
     return {
       role: "model",
-      content: `Hola! Estoy listo para ayudarte con la patente **${patents[0].pn ?? ""}** — ${patents[0].ti ?? ""}. ¿Qué quieres saber?`,
+      content: `Hola! Estoy listo para ayudarte con la patente **${patent.pn ?? ""}** — ${patent.ti ?? ""}. ¿Qué quieres saber?`,
     };
   }
-  if (patents.length > 1) {
+  if (patentCount > 0) {
     return {
       role: "model",
-      content: `Hola! Encontré **${patents.length} patentes** para "${contextLabel}". ¿Qué quieres saber sobre estos resultados?`,
+      content: `Hola! Encontré **${patentCount} patentes** para "${contextLabel}". ¿Qué quieres saber sobre estos resultados?`,
     };
   }
   return {
@@ -49,7 +58,7 @@ export default function FloatingChat() {
   const searchParams = useSearchParams();
 
   const [open, setOpen] = useState(false);
-  const [patents, setPatents] = useState<PatentContext[]>([]);
+  const [patentIds, setPatentIds] = useState<number[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -61,32 +70,36 @@ export default function FloatingChat() {
     const patentMatch = pathname.match(/^\/patentes\/(\d+)$/);
     const query = searchParams.get("q");
 
-    setPatents([]);
+    setPatentIds([]);
     setMessages([]);
 
     if (!open) return;
 
+    removeLegacyChatContext(sessionStorage);
+
     if (patentMatch) {
       setLoadingContext(true);
       fetch(`${API_URL}/patentes/${patentMatch[1]}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((patent) => {
-          setPatents([patent]);
-          setMessages([welcomeMessage([patent], patent.pn ?? "")]);
+        .then((response) => {
+          if (!response.ok) throw new Error(`Error ${response.status}`);
+          return response.json();
         })
+        .then((patent) => {
+          setPatentIds([patent.id]);
+          setMessages([welcomeMessage(1, patent.pn ?? "", patent)]);
+        })
+        .catch(() => setMessages([welcomeMessage(0, "")]))
         .finally(() => setLoadingContext(false));
     } else if (pathname === "/" && query) {
-      const cached = sessionStorage.getItem("chat_context_patents");
-      const cachedQuery = sessionStorage.getItem("chat_context_query");
-      if (cached && cachedQuery === query) {
-        const data = JSON.parse(cached);
-        setPatents(data);
-        setMessages([welcomeMessage(data, query)]);
+      const cached = readChatContext(sessionStorage, query);
+      if (cached) {
+        setPatentIds(cached.patentIds);
+        setMessages([welcomeMessage(cached.patentIds.length, query)]);
       } else {
-        setMessages([welcomeMessage([], query)]);
+        setMessages([welcomeMessage(0, query)]);
       }
     } else {
-      setMessages([welcomeMessage([], "")]);
+      setMessages([welcomeMessage(0, "")]);
     }
   }, [pathname, searchParams, open]);
 
@@ -110,8 +123,8 @@ export default function FloatingChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          history: messages.slice(1),
-          patents_context: patents,
+          history: buildChatHistory(messages.slice(1)),
+          patent_ids: patentIds,
         }),
       });
       if (!res.ok) {
@@ -151,9 +164,9 @@ export default function FloatingChat() {
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4" />
               <span className="font-semibold text-sm">PatentBot</span>
-              {patents.length > 0 && (
+              {patentIds.length > 0 && (
                 <span className="px-2 py-0.5 bg-white/20 rounded-full text-xs">
-                  {patents.length} {patents.length === 1 ? "patente" : "patentes"}
+                  {patentIds.length} {patentIds.length === 1 ? "patente" : "patentes"}
                 </span>
               )}
             </div>
@@ -244,6 +257,7 @@ export default function FloatingChat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Pregunta sobre estas patentes..."
+              maxLength={2000}
               rows={1}
               className="flex-1 resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-transparent bg-gray-50 placeholder-gray-400"
               style={{ maxHeight: "80px" }}
