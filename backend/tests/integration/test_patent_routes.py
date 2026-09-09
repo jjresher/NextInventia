@@ -9,9 +9,9 @@ agregando los casos que faltan para cumplir la rúbrica:
 Usa el fixture `client` de conftest.py (TestClient con get_supabase mockeado).
 """
 
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
 
 # ===========================================================================
 # GET / — health check
@@ -109,8 +109,17 @@ class TestListPatentes:
 
 class TestBuscarPatentes:
 
-    def test_busqueda_con_q_retorna_200_con_estructura_paginada(self, client):
+    @staticmethod
+    def configure_search_response(mock_supabase, data=None, count=0):
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock(
+            data={"data": data or [], "count": count}
+        )
+
+    def test_busqueda_con_q_retorna_200_con_estructura_paginada(
+        self, client, mock_supabase
+    ):
         """Happy path: ?q=motor → 200 con estructura data/count/page/page_size."""
+        self.configure_search_response(mock_supabase, [{"id": 1}], 1)
         response = client.get("/patentes/?q=motor")
 
         assert response.status_code == 200
@@ -120,15 +129,7 @@ class TestBuscarPatentes:
 
     def test_busqueda_sin_coincidencias_retorna_lista_vacia(self, client, mock_supabase):
         """Flujo alternativo: query sin matches → data=[] y count=0, no error."""
-        table = mock_supabase.table.return_value
-        (table.select.return_value
-              .or_.return_value
-              .execute.return_value) = MagicMock(count=0)
-        (table.select.return_value
-              .or_.return_value
-              .order.return_value
-              .range.return_value
-              .execute.return_value) = MagicMock(data=[])
+        self.configure_search_response(mock_supabase)
 
         response = client.get("/patentes/?q=xyzterminoinexistente")
 
@@ -145,15 +146,37 @@ class TestBuscarPatentes:
         response = client.get("/patentes/?q=")
         assert response.status_code == 422
 
+    def test_busqueda_con_q_solo_espacios_retorna_422(self, client):
+        response = client.get("/patentes/", params={"q": "   "})
+        assert response.status_code == 422
+
+    def test_busqueda_con_q_mayor_a_200_caracteres_retorna_422(self, client):
+        response = client.get("/patentes/", params={"q": "a" * 201})
+        assert response.status_code == 422
+
     @pytest.mark.parametrize("query", [
         "US10123456B2",
         "vehículo autónomo",
         "B60W60/00",
     ])
-    def test_busqueda_acepta_distintos_formatos_de_query(self, client, query):
+    def test_busqueda_acepta_distintos_formatos_de_query(
+        self, client, mock_supabase, query
+    ):
         """Escenarios: distintos formatos de query → 200, sin error de servidor."""
-        response = client.get(f"/patentes/?q={query}")
+        self.configure_search_response(mock_supabase)
+        response = client.get("/patentes/", params={"q": query})
         assert response.status_code == 200
+
+    @pytest.mark.parametrize("query", ["),id.gt.0", "100%_eléctrico", "a,b(c)"])
+    def test_busqueda_adversarial_se_envia_como_valor(
+        self, client, mock_supabase, query
+    ):
+        self.configure_search_response(mock_supabase)
+
+        response = client.get("/patentes/", params={"q": query})
+
+        assert response.status_code == 200
+        assert mock_supabase.rpc.call_args.args[1]["query_text"] == query
 
 
 # ===========================================================================
