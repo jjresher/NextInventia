@@ -1,8 +1,9 @@
 import logging
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 from google.genai import types
 from google.genai.errors import ClientError
+from pydantic import BaseModel
 
 from app.config import settings
 from app.services.gemini_client import GeminiFallbackClient
@@ -13,11 +14,15 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 _client = GeminiFallbackClient(api_key=settings.gemini_api_key)
 
-SYSTEM_PROMPT = """Eres PatentBot, un asistente especializado en patentes tecnológicas para la plataforma PatentScope.
+SYSTEM_PROMPT = """Eres PatentBot, un asistente especializado en patentes
+tecnológicas para la plataforma PatentScope.
 
-Tu rol es ayudar a ingenieros, diseñadores e investigadores a entender patentes, analizar tendencias tecnológicas y explorar el estado del arte en un campo específico.
+Tu rol es ayudar a ingenieros, diseñadores e investigadores a entender patentes,
+analizar tendencias tecnológicas y explorar el estado del arte en un campo específico.
 
-Cuando el usuario busca algo, se te proporciona el contexto de los resultados encontrados (lista de patentes con título, abstract, clasificaciones, solicitante, etc.). Usa ese contexto para responder preguntas específicas sobre esas patentes.
+Cuando el usuario busca algo, se te proporciona el contexto de los resultados
+encontrados (lista de patentes con título, abstract, clasificaciones, solicitante,
+etc.). Usa ese contexto para responder preguntas específicas sobre esas patentes.
 
 IMPORTANTE: Cuando menciones patentes específicas en tu respuesta, sigue estas reglas:
 - SIEMPRE escribe el número de patente como enlace markdown: [NUMERO_PATENTE](/patentes/ID)
@@ -56,7 +61,11 @@ def _build_context_block(patents: list[dict]) -> str:
     if not patents:
         return ""
     single = len(patents) == 1
-    lines = ["### Patente en detalle:" if single else "### Patentes en contexto (resultados de búsqueda):"]
+    lines = [
+        "### Patente en detalle:"
+        if single
+        else "### Patentes en contexto (resultados de búsqueda):"
+    ]
     ab_limit = None if single else 200
     for i, p in enumerate(patents[:20], 1):
         pid = p.get("id")
@@ -122,7 +131,10 @@ def chat(req: ChatRequest):
         # ClientError: error real de la API (no de cuota, GeminiFallbackClient
         # ya reintenta con el siguiente modelo ante un 429 real).
         logger.error("Gemini error: %s", e)
-        raise HTTPException(status_code=502, detail="El asistente está ocupado, intenta en unos segundos.")
+        raise HTTPException(
+            status_code=502,
+            detail="El asistente está ocupado, intenta en unos segundos.",
+        )
     except Exception as e:
         logger.error("Chat error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

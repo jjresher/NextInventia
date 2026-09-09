@@ -3,18 +3,19 @@ Usa get_supabase como punto de inyección para que el mock sea lo más simple y 
 Supabase nunca hace llamadas reales: los tests corren sin .env ni red.
 """
 import os
+
 os.environ.setdefault("SUPABASE_URL", "http://fake-url-for-testing")
 os.environ.setdefault("SUPABASE_KEY", "fake-key-for-testing")
 os.environ.setdefault("FRONTEND_ORIGIN", "http://localhost:3000")
 os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-testing")
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
-from app.main import app
+
 from app.dependencies import get_supabase
-
-
+from app.main import app
 
 # Datos de muestra reutilizables en todos los tests
 
