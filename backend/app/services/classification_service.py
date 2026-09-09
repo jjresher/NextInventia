@@ -90,7 +90,10 @@ class ClassificationService:
             generated = self._generate_with_gemini(description, candidates, top_k)
             return self._validate_generated(generated, candidates, description, top_k)
         except Exception as exc:
-            logger.warning("Gemini CPC classification failed; using fallback: %s", exc)
+            logger.warning(
+                "Gemini CPC classification failed; using fallback error_type=%s",
+                type(exc).__name__,
+            )
             return self._fallback_response(description, candidates, top_k)
 
     def retrieve(self, description: str, top_k: int = 40) -> list[CpcCandidate]:
