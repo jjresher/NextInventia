@@ -1,17 +1,15 @@
-import logging
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from google.genai import types
 from google.genai.errors import ClientError
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.config import settings
 from app.dependencies import get_patent_service
+from app.errors import ApiError
 from app.services.gemini_client import GeminiFallbackClient
 from app.services.patent_service import PatentService
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -144,7 +142,11 @@ def _build_context_block(patents: list[dict]) -> str:
 def chat(req: ChatRequest, service: PatentService = Depends(get_patent_service)):
     patents = service.get_by_ids(req.patent_ids)
     if len(patents) != len(req.patent_ids):
-        raise HTTPException(404, "Una o más patentes del contexto no existen")
+        raise ApiError(
+            404,
+            "PATENT_CONTEXT_NOT_FOUND",
+            "Una o más patentes del contexto no existen.",
+        )
     context_block = _build_context_block(patents)
 
     system_with_context = SYSTEM_PROMPT
@@ -166,17 +168,14 @@ def chat(req: ChatRequest, service: PatentService = Depends(get_patent_service))
 
     try:
         reply = _client.generate(contents, config=config)
-    except (RuntimeError, ClientError) as e:
+    except (RuntimeError, ClientError) as exc:
         # RuntimeError: la cascada agoto la cuota de todos los modelos.
         # ClientError: error real de la API (no de cuota, GeminiFallbackClient
         # ya reintenta con el siguiente modelo ante un 429 real).
-        logger.error("Gemini error: %s", e)
-        raise HTTPException(
-            status_code=502,
-            detail="El asistente está ocupado, intenta en unos segundos.",
-        )
-    except Exception as e:
-        logger.error("Chat error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise ApiError(
+            502,
+            "CHAT_PROVIDER_UNAVAILABLE",
+            "El asistente está ocupado, intenta en unos segundos.",
+        ) from exc
 
     return ChatResponse(reply=reply)

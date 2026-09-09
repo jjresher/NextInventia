@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from app.dependencies import get_classification_service
+from app.errors import ApiError
 from app.models.classification import CpcClassificationRequest, CpcClassificationResponse
 from app.services.classification_service import ClassificationService, CpcIndexError
 
@@ -15,4 +16,8 @@ def recommend_cpc(
     try:
         return service.recommend(request.description, request.top_k)
     except CpcIndexError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise ApiError(
+            503,
+            "CPC_INDEX_UNAVAILABLE",
+            "El índice CPC no está disponible.",
+        ) from exc

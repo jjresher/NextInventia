@@ -390,6 +390,11 @@ campos son opcionales. El servidor rehidrata las patentes desde Supabase y aplic
 presupuestos de longitud antes de llamar a Gemini. Consulte `/docs` para ver los
 contratos completos.
 
+Los errores controlados de chat y clasificación devuelven un `detail` estable,
+un `code` legible por máquina y un `correlation_id`. Ese mismo identificador se
+expone en la cabecera `X-Correlation-ID` de todas las respuestas para poder
+relacionar un fallo público con el log interno sin publicar datos sensibles.
+
 `GET /` solo confirma que la API responde: no verifica Supabase, Gemini ni el
 índice CPC. La clasificación devuelve 503 cuando faltan artefactos del índice o
 no son compatibles; los parámetros que incumplen los contratos devuelven 422.

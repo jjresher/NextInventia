@@ -2,6 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.errors import (
+    ApiError,
+    CorrelationIdMiddleware,
+    api_error_handler,
+    unexpected_error_handler,
+)
 from app.routes.chat import router as chat_router
 from app.routes.classification import router as classification_router
 from app.routes.patents import router as patents_router
@@ -16,6 +22,10 @@ LOCAL_NETWORK_ORIGIN_REGEX = (
 
 app = FastAPI(title="Patentologos API", version="1.0.0")
 
+app.add_exception_handler(ApiError, api_error_handler)
+app.add_exception_handler(Exception, unexpected_error_handler)
+app.add_middleware(CorrelationIdMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
@@ -24,6 +34,7 @@ app.add_middleware(
     ),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Correlation-ID"],
 )
 
 app.include_router(patents_router)

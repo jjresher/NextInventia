@@ -1,8 +1,11 @@
 from unittest.mock import MagicMock
+from uuid import UUID
 
+from fastapi.testclient import TestClient
 from google.genai.errors import ClientError
 
 import app.routes.chat as chat_module
+from app.main import app
 
 
 def test_chat_happy_path(client, monkeypatch):
@@ -192,7 +195,11 @@ def test_chat_returns_502_when_cascade_is_exhausted(client, monkeypatch):
     response = client.post("/chat/", json={"message": "Hola"})
 
     assert response.status_code == 502
-    assert "ocupado" in response.json()["detail"]
+    body = response.json()
+    assert "ocupado" in body["detail"]
+    assert body["code"] == "CHAT_PROVIDER_UNAVAILABLE"
+    assert body["correlation_id"] == response.headers["x-correlation-id"]
+    UUID(body["correlation_id"])
 
 
 def test_chat_returns_502_on_real_client_error(client, monkeypatch):
@@ -207,18 +214,31 @@ def test_chat_returns_502_on_real_client_error(client, monkeypatch):
     response = client.post("/chat/", json={"message": "Hola"})
 
     assert response.status_code == 502
-    assert "ocupado" in response.json()["detail"]
+    assert response.json()["code"] == "CHAT_PROVIDER_UNAVAILABLE"
 
 
-def test_chat_returns_500_on_unexpected_error(client, monkeypatch):
+def test_chat_returns_safe_500_with_correlatable_redacted_log(
+    client, monkeypatch, caplog
+):
     fake_client = MagicMock()
-    fake_client.generate.side_effect = ValueError("algo inesperado")
+    sensitive_value = "prompt=secreto api_key=abc123 ruta=C:/privado"
+    fake_client.generate.side_effect = ValueError(sensitive_value)
     monkeypatch.setattr(chat_module, "_client", fake_client)
 
-    response = client.post("/chat/", json={"message": "Hola"})
+    with caplog.at_level("ERROR", logger="app.errors"):
+        safe_client = TestClient(app, raise_server_exceptions=False)
+        response = safe_client.post("/chat/", json={"message": "Hola"})
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "algo inesperado"
+    body = response.json()
+    assert body["detail"] == "Ocurrió un error interno. Intenta de nuevo más tarde."
+    assert body["code"] == "INTERNAL_ERROR"
+    assert body["correlation_id"] == response.headers["x-correlation-id"]
+    assert body["correlation_id"] in caplog.text
+    assert "stack_trace=" in caplog.text
+    assert "ValueError" in caplog.text
+    assert sensitive_value not in caplog.text
+    assert sensitive_value not in response.text
 
 
 def test_chat_rejects_missing_message(client, monkeypatch):
