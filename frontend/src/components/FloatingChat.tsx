@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send, ChevronDown, Bot, User, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
+import { getSafeHttpsUrl, getSafePatentPath } from "@/lib/urlSafety.mjs";
 import {
   buildChatHistory,
   readChatContext,
@@ -26,6 +27,37 @@ interface PatentContext {
   cpc?: string;
   pd?: string | null;
   [key: string]: unknown;
+}
+
+function ChatLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const patentPath = getSafePatentPath(href);
+  if (patentPath) {
+    return (
+      <Link
+        href={patentPath}
+        className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-100 text-primary-700 rounded-md font-mono text-xs font-medium hover:bg-primary-200 transition-colors"
+      >
+        {children}
+      </Link>
+    );
+  }
+
+  const externalUrl = getSafeHttpsUrl(href);
+  if (!externalUrl) {
+    return <span className="break-all text-gray-600">{children} (enlace no permitido)</span>;
+  }
+
+  return (
+    <a
+      href={externalUrl.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Abrir sitio externo: ${externalUrl.hostname}`}
+      className="break-all underline text-primary-600 hover:text-primary-800"
+    >
+      {children} <span className="text-[0.85em]">({externalUrl.hostname})</span>
+    </a>
+  );
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -203,19 +235,7 @@ export default function FloatingChat() {
                           ol: ({ children }) => <ol className="list-decimal pl-4 space-y-0.5">{children}</ol>,
                           li: ({ children }) => <li>{children}</li>,
                           code: ({ children }) => <code className="bg-gray-200 px-1 rounded text-xs font-mono">{children}</code>,
-                          a: ({ href, children }) =>
-                            href?.startsWith("/patentes/") ? (
-                              <Link
-                                href={href}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-100 text-primary-700 rounded-md font-mono text-xs font-medium hover:bg-primary-200 transition-colors"
-                              >
-                                {children}
-                              </Link>
-                            ) : (
-                              <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-primary-600 hover:text-primary-800">
-                                {children}
-                              </a>
-                            ),
+                          a: ChatLink,
                         }}
                       >
                         {msg.content}

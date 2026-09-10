@@ -2,6 +2,7 @@ import Link from "next/link";
 import BackButton from "@/components/BackButton";
 import { fetchPatentById, fetchSimilarPatents, type SimilarPatent } from "@/lib/api";
 import { notFound } from "next/navigation";
+import { getSafeEspacenetUrl } from "@/lib/urlSafety.mjs";
 import {
   ExternalLink,
   FileText,
@@ -45,6 +46,7 @@ export default async function PatentDetailPage({ params }: Props) {
 
   const topic = patent.ww || patent.ws || "";
   const status = patent.lg_st || patent.ls || "";
+  const espacenetUrl = getSafeEspacenetUrl(patent.espacenet);
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
@@ -151,10 +153,10 @@ export default async function PatentDetailPage({ params }: Props) {
             </Section>
           )}
 
-          {patent.espacenet && (
+          {espacenetUrl && (
             <Section icon={ExternalLink} title="Enlace externo">
               <a
-                href={patent.espacenet}
+                href={espacenetUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-medium rounded-xl hover:from-primary-700 hover:to-accent-600 shadow-md shadow-primary-500/20 hover:shadow-lg hover:shadow-primary-500/30 transition-all duration-200 active:scale-[0.98]"
