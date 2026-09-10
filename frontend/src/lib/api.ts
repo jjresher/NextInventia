@@ -41,7 +41,7 @@ export interface PaginatedResponse {
 export interface SemanticSearchResult extends PatentSummary {
   /** Score de Reciprocal Rank Fusion (0–~0.033). Más alto = más relevante. */
   rrf_score: number | null;
-  /** Posición en el ranking BM25/FTS (null si solo apareció en semántico). */
+  /** Posición en el ranking PostgreSQL FTS (null si solo apareció en semántico). */
   fts_rank: number | null;
   /** Posición en el ranking semántico/KNN (null si solo apareció en léxico). */
   sem_rank: number | null;
@@ -121,7 +121,7 @@ export async function fetchPatentById(id: number): Promise<Patent> {
 }
 
 /**
- * Búsqueda híbrida BM25 + Sentence-BERT con fusión RRF. Devuelve `top_k`
+ * Búsqueda híbrida PostgreSQL FTS + Sentence-BERT con fusión RRF. Devuelve `top_k`
  * resultados ordenados por `rrf_score`. Funciona en lenguaje natural y en
  * español o inglés indistintamente (modelo multilingüe).
  *
