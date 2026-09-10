@@ -73,7 +73,7 @@ class PatentService:
         return result.get("data", []), result.get("count", 0)
 
     def search_semantic(self, query: str, top_k: int = 20) -> list[dict]:
-        """Búsqueda híbrida BM25 + Sentence-BERT con fusión RRF.
+        """Búsqueda híbrida PostgreSQL FTS + Sentence-BERT con fusión RRF.
 
         Llama al RPC `search_patentes_hybrid` definido en
         `migrations/002_hybrid_search_function.sql`.

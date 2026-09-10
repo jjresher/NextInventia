@@ -33,7 +33,7 @@ def search_semantic(
     payload: SemanticSearchRequest,
     service: PatentService = Depends(get_patent_service),
 ):
-    """Búsqueda híbrida BM25 + Sentence-BERT con fusión RRF.
+    """Búsqueda híbrida PostgreSQL FTS + Sentence-BERT con fusión RRF.
 
     A diferencia de `GET /patentes/?q=`, este endpoint:
       * calcula el embedding de la query con Sentence-BERT,

@@ -34,7 +34,7 @@ export default async function PatentDetailPage({ params }: Props) {
     notFound();
   }
 
-  // Carga "patentes similares" en paralelo. Si el embedding aún no existe
+  // Carga "patentes similares" después del detalle. Si el embedding aún no existe
   // o el RPC falla, ignoramos y simplemente no mostramos la sección.
   let similar: SimilarPatent[] = [];
   try {

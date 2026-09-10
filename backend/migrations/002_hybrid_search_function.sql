@@ -1,11 +1,11 @@
 -- =============================================================================
--- Migración 002: Función `search_patentes_hybrid` (BM25 + Semántica + RRF)
+-- Migración 002: Función `search_patentes_hybrid` (PostgreSQL FTS + semántica + RRF)
 -- =============================================================================
 -- Combina dos rankings independientes:
---   * Léxico   -> Postgres FTS sobre `search_vector` (similar a BM25).
+--   * Léxico   -> PostgreSQL FTS sobre `search_vector`, ordenado con ts_rank_cd.
 --   * Semántico-> KNN con pgvector sobre `embedding` (Sentence-BERT).
 -- Y los fusiona con Reciprocal Rank Fusion (RRF), que pondera POSICIONES, no
--- scores absolutos (que son incomparables entre BM25 y coseno).
+-- scores absolutos (que son incomparables entre ts_rank_cd y coseno).
 --
 -- Fórmula: RRF(doc) = Σ_i 1 / (k + rank_i(doc))   con k=60 (estándar).
 --

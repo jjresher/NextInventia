@@ -7,7 +7,6 @@ pydantic-settings
 python-dotenv
 pandas
 openpyxl
-ruff
 
 sentence-transformers
 scikit-learn

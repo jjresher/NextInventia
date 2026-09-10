@@ -28,7 +28,7 @@ export default async function HomePage({ searchParams }: Props) {
 
   try {
     if (query) {
-      // Con query → búsqueda híbrida BM25 + Sentence-BERT con RRF.
+      // Con query → búsqueda híbrida PostgreSQL FTS + Sentence-BERT con RRF.
       const sem = await searchSemantic(query, 20);
       semanticResults = sem.data;
       total = sem.count;
@@ -66,7 +66,7 @@ export default async function HomePage({ searchParams }: Props) {
           <span className="gradient-text">Buscador de Patentes</span>
         </h1>
         <p className="text-gray-500 max-w-xl mx-auto text-lg leading-relaxed">
-          Búsqueda híbrida con BM25 y embeddings semánticos multilingües.
+          Búsqueda híbrida con PostgreSQL FTS y embeddings semánticos multilingües.
         </p>
 
         <div className="flex justify-center pt-2">
@@ -112,7 +112,7 @@ export default async function HomePage({ searchParams }: Props) {
               </span>
             </div>
             <span className="text-xs text-gray-400 bg-gray-50 px-3 py-1 rounded-full">
-              ranking · BM25 + Sentence-BERT (RRF)
+              ranking · PostgreSQL FTS + Sentence-BERT (RRF)
             </span>
           </div>
 
