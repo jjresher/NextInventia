@@ -11,6 +11,7 @@ from app.services.classification_service import (
 )
 from app.services.cpc_catalog import file_sha256
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME
+from app.services.gemini_client import GeminiQuotaExhaustedError
 
 
 def vector(value: float, axis: int = 0) -> np.ndarray:
@@ -197,13 +198,13 @@ def test_gemini_prompt_includes_selection_criteria_and_semantic_context(local_in
     assert "Specific concept: Controlling intake air." in prompt
 
 
-def test_fallback_when_gemini_fails(local_index, monkeypatch):
+def test_fallback_when_gemini_quota_is_exhausted(local_index, monkeypatch, caplog):
     monkeypatch.setattr(
         "app.services.classification_service.encode_query",
         lambda _: query_vector(),
     )
     client = MagicMock()
-    client.generate.side_effect = RuntimeError("unavailable")
+    client.generate.side_effect = GeminiQuotaExhaustedError("unavailable")
     service = ClassificationService(*local_index, gemini_client=client)
 
     result = service.recommend("control electronico e inyeccion", top_k=2)
@@ -211,6 +212,36 @@ def test_fallback_when_gemini_fails(local_index, monkeypatch):
     assert len(result.recommended_codes) == 2
     assert result.recommended_codes[0].code == "F02D 41/0002"
     assert "respaldo" in result.notes
+    assert result.local_fallback is True
+    assert "classification_fallback" in caplog.text
+    assert "control electronico" not in caplog.text
+
+
+def test_fallback_when_gemini_returns_invalid_json(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.return_value = "not-json"
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    result = service.recommend("control electronico", top_k=2)
+
+    assert result.local_fallback is True
+
+
+def test_unexpected_exception_is_not_hidden_by_fallback(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.side_effect = TypeError("internal bug")
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    with pytest.raises(TypeError, match="internal bug"):
+        service.recommend("control electronico", top_k=2)
 
 
 def test_google_patents_query_template():

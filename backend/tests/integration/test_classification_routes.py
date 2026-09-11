@@ -59,6 +59,7 @@ def test_recommend_cpc_happy_path(client):
     assert body["recommended_codes"][0]["code"] == "F02D 41/00"
     assert body["recommended_codes"][0]["classification_path"][0]["code"] == "F02D"
     assert "F02D41/00" in body["google_patents_query"]
+    assert body["local_fallback"] is False
 
 
 def test_recommend_cpc_rejects_blank_description(client):

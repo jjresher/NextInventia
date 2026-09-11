@@ -186,10 +186,16 @@ El backend no confía ciegamente en la respuesta. Normaliza espacios y mayúscul
 del código y descarta cualquier recomendación que no exista dentro de los 40
 candidatos. También elimina duplicados y limita el resultado a `top_k`.
 
-Si Gemini falla, devuelve JSON inválido o no selecciona ningún código válido,
-se utiliza un fallback con hasta cinco candidatos ordenados por similitud local,
-sin superar el `top_k` solicitado. La respuesta indica este caso en `notes` y
-genera palabras clave mediante extracción local.
+Si Gemini alcanza la cuota, falla como proveedor, devuelve JSON inválido o no
+selecciona ningún código válido, se utiliza un fallback con hasta cinco candidatos
+ordenados por similitud local, sin superar el `top_k` solicitado. La respuesta
+marca `local_fallback: true`, lo indica también en `notes` y genera palabras clave
+mediante extracción local.
+
+Los errores inesperados de programación o de esquema no activan el fallback: se
+propagan al manejador global, que responde con un error correlacionado. La señal
+`classification_fallback` registra únicamente el tipo de error, sin la descripción
+de la invención ni el contenido generado.
 
 ## API
 
@@ -234,7 +240,8 @@ Respuesta resumida:
   ],
   "keywords": ["engine control", "fuel injection"],
   "google_patents_query": "(F02D41/0002) (\"engine control\" OR \"fuel injection\")",
-  "notes": "..."
+  "notes": "...",
+  "local_fallback": false
 }
 ```
 

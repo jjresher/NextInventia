@@ -92,6 +92,7 @@ export interface CpcClassificationResponse {
   keywords: string[];
   google_patents_query: string;
   notes: string;
+  local_fallback: boolean;
 }
 
 /**

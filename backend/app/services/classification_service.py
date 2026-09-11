@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 from google.genai import types
+from google.genai.errors import APIError
 
 from app.config import settings
 from app.models.classification import (
@@ -25,7 +26,7 @@ from app.services.cpc_catalog import (
     load_cpc_catalog,
 )
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME, encode_query
-from app.services.gemini_client import GeminiFallbackClient
+from app.services.gemini_client import GeminiFallbackClient, GeminiQuotaExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,10 @@ STOPWORDS = {
 
 class CpcIndexError(RuntimeError):
     pass
+
+
+class GeminiResponseError(ValueError):
+    """Gemini returned content that cannot produce a valid classification."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,9 +94,14 @@ class ClassificationService:
         try:
             generated = self._generate_with_gemini(description, candidates, top_k)
             return self._validate_generated(generated, candidates, description, top_k)
-        except Exception as exc:
+        except (
+            APIError,
+            GeminiQuotaExhaustedError,
+            json.JSONDecodeError,
+            GeminiResponseError,
+        ) as exc:
             logger.warning(
-                "Gemini CPC classification failed; using fallback error_type=%s",
+                "classification_fallback provider=gemini local_fallback=true error_type=%s",
                 type(exc).__name__,
             )
             return self._fallback_response(description, candidates, top_k)
@@ -264,7 +274,7 @@ FORMATO:
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         if not text:
-            raise ValueError("Gemini devolvio una respuesta vacia")
+            raise GeminiResponseError("Gemini devolvio una respuesta vacia")
         return json.loads(text)
 
     def _validate_generated(
@@ -300,7 +310,9 @@ FORMATO:
                 break
 
         if not recommendations:
-            raise ValueError("Gemini no devolvio codigos CPC validos del conjunto recuperado")
+            raise GeminiResponseError(
+                "Gemini no devolvio codigos CPC validos del conjunto recuperado"
+            )
 
         keywords = self._clean_keywords(generated.get("keywords", []))
         if not keywords:
@@ -328,6 +340,7 @@ FORMATO:
         return self._response(
             recommendations,
             self.extract_keywords(description),
+            local_fallback=True,
             notes=(
                 "Gemini no estuvo disponible; se muestra un resultado de respaldo "
                 "basado unicamente en similitud semantica local."
@@ -363,6 +376,7 @@ FORMATO:
         recommendations: list[RecommendedCpcCode],
         keywords: list[str],
         notes: str | None = None,
+        local_fallback: bool = False,
     ) -> CpcClassificationResponse:
         return CpcClassificationResponse(
             recommended_codes=recommendations,
@@ -371,6 +385,7 @@ FORMATO:
                 [item.code for item in recommendations],
                 keywords,
             ),
+            local_fallback=local_fallback,
             notes=notes or (
                 "Sugerencia preliminar basada en recuperacion semantica local. "
                 "Verifique manualmente la clasificacion y los resultados en Google Patents."
