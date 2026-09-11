@@ -34,6 +34,15 @@ test("distingue patente inexistente de fallo recuperable", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Reintentar" })).toBeVisible();
 });
 
+test("convierte una respuesta incompatible en un error controlado", async ({ page }) => {
+  await page.goto("/patentes/2");
+
+  await expect(
+    page.getByRole("heading", { name: "No pudimos cargar esta patente" })
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reintentar" })).toBeVisible();
+});
+
 test("clasifica una descripción mediante la API falsa", async ({ page }) => {
   await page.goto("/clasificar");
   await page.getByPlaceholder(/sistema electrónico/).fill(

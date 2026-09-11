@@ -120,7 +120,7 @@ class TestBuscarPatentes:
         self, client, mock_supabase
     ):
         """Happy path: ?q=motor → 200 con estructura data/count/page/page_size."""
-        self.configure_search_response(mock_supabase, [{"id": 1}], 1)
+        self.configure_search_response(mock_supabase, [{"id": 1, "pn": "US123"}], 1)
         response = client.get("/patentes/?q=motor")
 
         assert response.status_code == 200

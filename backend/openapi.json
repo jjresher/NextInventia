@@ -1,0 +1,1328 @@
+{
+  "components": {
+    "schemas": {
+      "ChatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            },
+            "maxItems": 12,
+            "title": "History",
+            "type": "array"
+          },
+          "message": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "patent_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 20,
+            "title": "Patent Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatResponse": {
+        "properties": {
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reply"
+        ],
+        "title": "ChatResponse",
+        "type": "object"
+      },
+      "CpcClassificationPathItem": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "section",
+              "class",
+              "subclass",
+              "main_group"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "title",
+          "level"
+        ],
+        "title": "CpcClassificationPathItem",
+        "type": "object"
+      },
+      "CpcClassificationRequest": {
+        "properties": {
+          "description": {
+            "maxLength": 6000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 8,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "title": "CpcClassificationRequest",
+        "type": "object"
+      },
+      "CpcClassificationResponse": {
+        "properties": {
+          "google_patents_query": {
+            "title": "Google Patents Query",
+            "type": "string"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "local_fallback": {
+            "default": false,
+            "title": "Local Fallback",
+            "type": "boolean"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "recommended_codes": {
+            "items": {
+              "$ref": "#/components/schemas/RecommendedCpcCode"
+            },
+            "title": "Recommended Codes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recommended_codes",
+          "keywords",
+          "google_patents_query",
+          "notes"
+        ],
+        "title": "CpcClassificationResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Message": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "model"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "Message",
+        "type": "object"
+      },
+      "PaginatedResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/PatentSummary"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data",
+          "count",
+          "page",
+          "page_size"
+        ],
+        "title": "PaginatedResponse",
+        "type": "object"
+      },
+      "Patent": {
+        "description": "Versión completa: incluye descripción y claims (texto largo).",
+        "properties": {
+          "ab": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ab"
+          },
+          "apc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apc"
+          },
+          "claimen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimen"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cpc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpc"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion"
+          },
+          "espacenet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Espacenet"
+          },
+          "ic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ic"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "lg_st": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lg St"
+          },
+          "ls": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ls"
+          },
+          "pc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc"
+          },
+          "pd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pd"
+          },
+          "pn": {
+            "title": "Pn",
+            "type": "string"
+          },
+          "ti": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ti"
+          },
+          "ws": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ws"
+          },
+          "ww": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ww"
+          }
+        },
+        "required": [
+          "id",
+          "pn"
+        ],
+        "title": "Patent",
+        "type": "object"
+      },
+      "PatentSummary": {
+        "description": "Versión ligera para listados (sin texto largo).",
+        "properties": {
+          "ab": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ab"
+          },
+          "apc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apc"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cpc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpc"
+          },
+          "espacenet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Espacenet"
+          },
+          "ic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ic"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "lg_st": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lg St"
+          },
+          "ls": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ls"
+          },
+          "pc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc"
+          },
+          "pd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pd"
+          },
+          "pn": {
+            "title": "Pn",
+            "type": "string"
+          },
+          "ti": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ti"
+          },
+          "ws": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ws"
+          },
+          "ww": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ww"
+          }
+        },
+        "required": [
+          "id",
+          "pn"
+        ],
+        "title": "PatentSummary",
+        "type": "object"
+      },
+      "RecommendedCpcCode": {
+        "properties": {
+          "classification_path": {
+            "items": {
+              "$ref": "#/components/schemas/CpcClassificationPathItem"
+            },
+            "title": "Classification Path",
+            "type": "array"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "confidence": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "title": "Confidence",
+            "type": "string"
+          },
+          "level": {
+            "default": "subgroup",
+            "enum": [
+              "main_group",
+              "subgroup"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "retrieval_score": {
+            "title": "Retrieval Score",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "title",
+          "reason",
+          "confidence",
+          "retrieval_score"
+        ],
+        "title": "RecommendedCpcCode",
+        "type": "object"
+      },
+      "SemanticSearchRequest": {
+        "properties": {
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SemanticSearchRequest",
+        "type": "object"
+      },
+      "SemanticSearchResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticSearchResult"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "data",
+          "count"
+        ],
+        "title": "SemanticSearchResponse",
+        "type": "object"
+      },
+      "SemanticSearchResult": {
+        "description": "Resultado del RPC `search_patentes_hybrid`.",
+        "properties": {
+          "ab": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ab"
+          },
+          "apc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apc"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cpc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpc"
+          },
+          "espacenet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Espacenet"
+          },
+          "fts_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fts Rank"
+          },
+          "ic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ic"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "lg_st": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lg St"
+          },
+          "ls": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ls"
+          },
+          "pc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pc"
+          },
+          "pd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pd"
+          },
+          "pn": {
+            "title": "Pn",
+            "type": "string"
+          },
+          "rrf_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rrf Score"
+          },
+          "sem_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sem Rank"
+          },
+          "ti": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ti"
+          },
+          "ws": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ws"
+          },
+          "ww": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ww"
+          }
+        },
+        "required": [
+          "id",
+          "pn"
+        ],
+        "title": "SemanticSearchResult",
+        "type": "object"
+      },
+      "SimilarPatent": {
+        "properties": {
+          "ab": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ab"
+          },
+          "apc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apc"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "distance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "pn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pn"
+          },
+          "ti": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ti"
+          },
+          "ww": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ww"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "SimilarPatent",
+        "type": "object"
+      },
+      "SimilarPatentsResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SimilarPatent"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "patent_id": {
+            "title": "Patent Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "patent_id",
+          "data",
+          "count"
+        ],
+        "title": "SimilarPatentsResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Patentologos API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "health_check__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Check"
+      }
+    },
+    "/chat/": {
+      "post": {
+        "operationId": "chat_chat__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/clasificacion/cpc/recommend": {
+      "post": {
+        "operationId": "recommend_cpc_clasificacion_cpc_recommend_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CpcClassificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CpcClassificationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recommend Cpc",
+        "tags": [
+          "clasificacion"
+        ]
+      }
+    },
+    "/patentes/": {
+      "get": {
+        "operationId": "list_patents_patentes__get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "pattern": ".*\\S.*",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Patents",
+        "tags": [
+          "patentes"
+        ]
+      }
+    },
+    "/patentes/search/semantic": {
+      "post": {
+        "description": "Búsqueda híbrida PostgreSQL FTS + Sentence-BERT con fusión RRF.\n\nA diferencia de `GET /patentes/?q=`, este endpoint:\n  * calcula el embedding de la query con Sentence-BERT,\n  * llama al RPC `search_patentes_hybrid` en Supabase,\n  * devuelve los resultados ordenados por `rrf_score`.",
+        "operationId": "search_semantic_patentes_search_semantic_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SemanticSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SemanticSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Semantic",
+        "tags": [
+          "patentes"
+        ]
+      }
+    },
+    "/patentes/{patent_id}": {
+      "get": {
+        "operationId": "get_patent_patentes__patent_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patent_id",
+            "required": true,
+            "schema": {
+              "title": "Patent Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Patent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Patent",
+        "tags": [
+          "patentes"
+        ]
+      }
+    },
+    "/patentes/{patent_id}/similares": {
+      "get": {
+        "description": "Patentes más cercanas a la dada (KNN puro sobre embedding).",
+        "operationId": "get_similares_patentes__patent_id__similares_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patent_id",
+            "required": true,
+            "schema": {
+              "title": "Patent Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "top_k",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Top K",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarPatentsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Similares",
+        "tags": [
+          "patentes"
+        ]
+      }
+    }
+  }
+}

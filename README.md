@@ -463,12 +463,18 @@ los servicios desplegados.
 Frontend, desde `frontend/`:
 
 ```powershell
+npm run api:check
 npm test
 npm run lint
 npm run build
 npm run test:e2e
 npm audit --omit=dev --audit-level=high
 ```
+
+El contrato versionado vive en `backend/openapi.json`. Para actualizarlo tras un
+cambio de API, ejecute `python scripts/export_openapi.py` desde `backend/` y luego
+`npm run api:types` desde `frontend/`. Las respuestas críticas se validan en runtime
+antes de entregarlas a los componentes.
 
 El workflow `.github/workflows/ci.yml` ejecuta estos checks en cada pull request,
 usa servicios falsos para los smoke tests E2E y analiza secretos con Gitleaks. No

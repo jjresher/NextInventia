@@ -1,3 +1,14 @@
+import { z } from "zod";
+import type { components } from "./api.generated";
+import {
+  chatResponseSchema,
+  cpcClassificationResponseSchema,
+  paginatedResponseSchema,
+  patentSchema,
+  semanticSearchResponseSchema,
+  similarPatentsResponseSchema,
+} from "./api.schemas";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const CATALOG_REVALIDATE_SECONDS = 60;
 const PATENT_REVALIDATE_SECONDS = 300;
@@ -9,99 +20,32 @@ export class ApiResponseError extends Error {
   }
 }
 
-/**
- * Versión resumida de una patente. Refleja las columnas devueltas por
- * `SUMMARY_COLUMNS` en el backend; incluye los campos nuevos (`apc`, `ww`,
- * `pd`, `lg_st`, `cluster_id`) y deja los legacy (`pc`, `ws`, `ls`)
- * opcionales para compatibilidad con datos viejos no migrados.
- */
-export interface PatentSummary {
-  id: number;
-  pn: string;
-  ti?: string;
-  ab?: string;
-  cpc?: string;
-  ic?: string;
-  apc?: string | null;
-  pd?: string | null;
-  ww?: string | null;
-  lg_st?: string | null;
-  cluster_id?: number | null;
-  espacenet?: string;
-
-  // Campos legacy: existen para datos viejos pero no se llenan en cargas nuevas.
-  pc?: string | null;
-  ws?: string | null;
-  ls?: string | null;
+export class ApiContractError extends Error {
+  constructor() {
+    super("La API devolvió una respuesta incompatible.");
+    this.name = "ApiContractError";
+  }
 }
 
-export interface Patent extends PatentSummary {
-  descripcion?: string;
-  claimen?: string;
-}
+type Schema<Name extends keyof components["schemas"]> = components["schemas"][Name];
 
-export interface PaginatedResponse {
-  data: PatentSummary[];
-  count: number;
-  page: number;
-  page_size: number;
-}
+export type PatentSummary = Schema<"PatentSummary">;
+export type Patent = Schema<"Patent">;
+export type PaginatedResponse = Schema<"PaginatedResponse">;
+export type SemanticSearchResult = Schema<"SemanticSearchResult">;
+export type SemanticSearchResponse = Schema<"SemanticSearchResponse">;
+export type SimilarPatent = Schema<"SimilarPatent">;
+export type SimilarPatentsResponse = Schema<"SimilarPatentsResponse">;
+export type CpcClassificationResponse = z.output<typeof cpcClassificationResponseSchema>;
+export type ChatMessage = Schema<"Message">;
 
-export interface SemanticSearchResult extends PatentSummary {
-  /** Score de Reciprocal Rank Fusion (0–~0.033). Más alto = más relevante. */
-  rrf_score: number | null;
-  /** Posición en el ranking PostgreSQL FTS (null si solo apareció en semántico). */
-  fts_rank: number | null;
-  /** Posición en el ranking semántico/KNN (null si solo apareció en léxico). */
-  sem_rank: number | null;
-}
-
-export interface SemanticSearchResponse {
-  query: string;
-  data: SemanticSearchResult[];
-  count: number;
-}
-
-export interface SimilarPatent {
-  id: number;
-  pn?: string | null;
-  ti?: string | null;
-  ab?: string | null;
-  ww?: string | null;
-  apc?: string | null;
-  cluster_id?: number | null;
-  /** Distancia coseno (0 = idénticas, 2 = opuestas). */
-  distance: number | null;
-}
-
-export interface SimilarPatentsResponse {
-  patent_id: number;
-  data: SimilarPatent[];
-  count: number;
-}
-
-export interface RecommendedCpcCode {
-  code: string;
-  title: string;
-  level: "main_group" | "subgroup";
-  classification_path: CpcClassificationPathItem[];
-  reason: string;
-  confidence: "high" | "medium" | "low";
-  retrieval_score: number;
-}
-
-export interface CpcClassificationPathItem {
-  code: string;
-  title: string;
-  level: "section" | "class" | "subclass" | "main_group";
-}
-
-export interface CpcClassificationResponse {
-  recommended_codes: RecommendedCpcCode[];
-  keywords: string[];
-  google_patents_query: string;
-  notes: string;
-  local_fallback: boolean;
+async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
+  const payload: unknown = await response.json().catch(() => {
+    throw new ApiContractError();
+  });
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) throw new ApiContractError();
+  return parsed.data;
 }
 
 /**
@@ -123,7 +67,7 @@ export async function fetchPatents(
     next: { revalidate: CATALOG_REVALIDATE_SECONDS },
   });
   if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+  return parseResponse(res, paginatedResponseSchema);
 }
 
 export async function fetchPatentById(id: number): Promise<Patent> {
@@ -131,7 +75,7 @@ export async function fetchPatentById(id: number): Promise<Patent> {
     next: { revalidate: PATENT_REVALIDATE_SECONDS },
   });
   if (!res.ok) throw new ApiResponseError(res.status);
-  return res.json();
+  return parseResponse(res, patentSchema);
 }
 
 /**
@@ -153,7 +97,7 @@ export async function searchSemantic(
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+  return parseResponse(res, semanticSearchResponseSchema);
 }
 
 /**
@@ -169,7 +113,7 @@ export async function fetchSimilarPatents(
     { next: { revalidate: PATENT_REVALIDATE_SECONDS } }
   );
   if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+  return parseResponse(res, similarPatentsResponseSchema);
 }
 
 export async function recommendCpcCodes(
@@ -191,5 +135,28 @@ export async function recommendCpcCodes(
         : "No fue posible analizar la descripción.";
     throw new Error(detail);
   }
-  return res.json();
+  return parseResponse(res, cpcClassificationResponseSchema);
+}
+
+export async function sendChat(
+  message: string,
+  history: ChatMessage[],
+  patentIds: number[]
+): Promise<string> {
+  const res = await fetch(`${API_URL}/chat/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, history, patent_ids: patentIds }),
+  });
+  if (!res.ok) {
+    const payload: unknown = await res.json().catch(() => null);
+    const detail =
+      payload && typeof payload === "object" && "detail" in payload &&
+      typeof payload.detail === "string"
+        ? payload.detail
+        : `Error ${res.status}`;
+    throw new Error(detail);
+  }
+  const data = await parseResponse(res, chatResponseSchema);
+  return data.reply;
 }

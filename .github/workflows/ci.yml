@@ -30,6 +30,7 @@ jobs:
       - run: python -m pip install --require-hashes -r requirements-dev.lock
       - run: python -m pytest
       - run: python -m ruff check app exel tests
+      - run: python scripts/export_openapi.py --check
       - run: python -m pip_audit -r requirements.lock --require-hashes
 
   frontend:
@@ -47,6 +48,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm test
+      - run: npm run api:check
       - run: npm run lint
       - run: npm run build
       - run: npx playwright install --with-deps chromium
