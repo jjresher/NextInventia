@@ -60,7 +60,9 @@ exclusivamente mediante HTTPS. Desarrollo omite HSTS para no forzar HTTPS local.
 | `/clasificar` | Recomendaciones CPC y ecuación para Google Patents |
 | `/acerca` | Información del proyecto |
 
-- `src/lib/api.ts`: cliente HTTP y tipos de respuesta del backend.
+- `src/lib/api.ts`: cliente HTTP con validación runtime de respuestas.
+- `src/lib/api.generated.ts`: tipos generados desde `backend/openapi.json`; no se
+  edita manualmente.
 - `src/components/FloatingChat.tsx`: chat contextual disponible desde el layout.
 - `src/components/SearchContextStore.tsx`: contexto de búsqueda en `sessionStorage`.
 - `src/components/CpcClassifier.tsx`: formulario y resultados de clasificación.
@@ -80,12 +82,17 @@ el detalle, la patente y sus similares también comienzan a cargarse juntas.
 ## Verificación y producción
 
 ```powershell
+npm run api:check
 npm run lint
 npm test
 npm run build
 npm run test:e2e
 npm run start
 ```
+
+Cuando cambie un modelo o endpoint, ejecute `python scripts/export_openapi.py`
+desde `backend/` y después `npm run api:types` desde `frontend/`. CI falla si el
+esquema OpenAPI o los tipos generados están desactualizados.
 
 `test` cubre la persistencia y rehidratación segura del contexto del chat.
 `test:e2e` levanta el build y una API falsa local para verificar catálogo, detalle,

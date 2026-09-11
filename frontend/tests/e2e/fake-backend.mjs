@@ -26,6 +26,7 @@ createServer((request, response) => {
     return send(response, { data: [patent], count: 1, page: 1, page_size: 20 });
   }
   if (request.url === "/patentes/1") return send(response, patent);
+  if (request.url === "/patentes/2") return send(response, { id: 2 });
   if (request.url === "/patentes/404") {
     return send(response, { detail: "Patente no encontrada" }, 404);
   }
@@ -34,6 +35,9 @@ createServer((request, response) => {
   }
   if (request.url?.startsWith("/patentes/1/similares")) {
     return send(response, { patent_id: 1, data: [], count: 0 });
+  }
+  if (request.url?.startsWith("/patentes/2/similares")) {
+    return send(response, { patent_id: 2, data: [], count: 0 });
   }
   if (request.url === "/chat/" && request.method === "POST") {
     return send(response, { reply: "Respuesta del chat falso." });

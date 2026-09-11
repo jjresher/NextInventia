@@ -11,23 +11,14 @@ import {
   readChatContext,
   removeLegacyChatContext,
 } from "@/lib/chatContext.mjs";
+import {
+  fetchPatentById,
+  sendChat,
+  type ChatMessage,
+  type Patent,
+} from "@/lib/api";
 
-interface Message {
-  role: "user" | "model";
-  content: string;
-}
-
-interface PatentContext {
-  id: number;
-  pn?: string;
-  ti?: string;
-  ab?: string;
-  apc?: string | null;
-  pc?: string | null;
-  cpc?: string;
-  pd?: string | null;
-  [key: string]: unknown;
-}
+type Message = ChatMessage;
 
 function ChatLink({ href, children }: { href?: string; children?: React.ReactNode }) {
   const patentPath = getSafePatentPath(href);
@@ -60,12 +51,10 @@ function ChatLink({ href, children }: { href?: string; children?: React.ReactNod
   );
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
 function welcomeMessage(
   patentCount: number,
   contextLabel: string,
-  patent?: PatentContext
+  patent?: Patent
 ): Message {
   if (patentCount === 1 && patent) {
     return {
@@ -111,11 +100,7 @@ export default function FloatingChat() {
 
     if (patentMatch) {
       setLoadingContext(true);
-      fetch(`${API_URL}/patentes/${patentMatch[1]}`, { cache: "no-store" })
-        .then((response) => {
-          if (!response.ok) throw new Error(`Error ${response.status}`);
-          return response.json();
-        })
+      fetchPatentById(Number(patentMatch[1]))
         .then((patent) => {
           setPatentIds([patent.id]);
           setMessages([welcomeMessage(1, patent.pn ?? "", patent)]);
@@ -150,21 +135,12 @@ export default function FloatingChat() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/chat/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          history: buildChatHistory(messages.slice(1)),
-          patent_ids: patentIds,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail ?? `Error ${res.status}`);
-      }
-      const data = await res.json();
-      setMessages([...newHistory, { role: "model", content: data.reply }]);
+      const reply = await sendChat(
+        text,
+        buildChatHistory(messages.slice(1)),
+        patentIds
+      );
+      setMessages([...newHistory, { role: "model", content: reply }]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error desconocido";
       console.error("[FloatingChat]", msg);
