@@ -12,6 +12,10 @@ Usa el fixture `client` de conftest.py (TestClient con get_supabase mockeado).
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi.testclient import TestClient
+
+from app.dependencies import get_patent_service
+from app.main import app
 
 # ===========================================================================
 # GET / — health check
@@ -202,7 +206,7 @@ class TestGetPatente:
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
-             .single.return_value
+             .maybe_single.return_value
              .execute.return_value) = MagicMock(data=None)
 
         response = client.get("/patentes/99999")
@@ -220,9 +224,27 @@ class TestGetPatente:
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
-             .single.return_value
+             .maybe_single.return_value
              .execute.return_value) = MagicMock(data=None)
 
         detail = client.get("/patentes/0").json()["detail"]
         assert isinstance(detail, str)
         assert len(detail) > 0
+
+    def test_get_patente_fallo_de_infraestructura_retorna_500_correlacionado(self):
+        class FailingService:
+            def get_by_id(self, patent_id: int):
+                raise ConnectionError("internal-host.example secret-token")
+
+        app.dependency_overrides[get_patent_service] = FailingService
+        try:
+            with TestClient(app, raise_server_exceptions=False) as error_client:
+                response = error_client.get("/patentes/1")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 500
+        assert response.json()["code"] == "INTERNAL_ERROR"
+        assert response.json()["correlation_id"] == response.headers["x-correlation-id"]
+        assert "internal-host" not in response.text
+        assert "secret-token" not in response.text

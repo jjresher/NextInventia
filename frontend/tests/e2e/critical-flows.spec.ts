@@ -18,6 +18,17 @@ test("abre una patente y conversa sin servicios reales", async ({ page }) => {
   await expect(page.getByText("Respuesta del chat falso.")).toBeVisible();
 });
 
+test("distingue patente inexistente de fallo recuperable", async ({ page }) => {
+  await page.goto("/patentes/404");
+  await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+
+  await page.goto("/patentes/500");
+  await expect(
+    page.getByRole("heading", { name: "No pudimos cargar esta patente" })
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reintentar" })).toBeVisible();
+});
+
 test("clasifica una descripción mediante la API falsa", async ({ page }) => {
   await page.goto("/clasificar");
   await page.getByPlaceholder(/sistema electrónico/).fill(

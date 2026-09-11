@@ -1,5 +1,12 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export class ApiResponseError extends Error {
+  constructor(public readonly status: number) {
+    super(`Error ${status}`);
+    this.name = "ApiResponseError";
+  }
+}
+
 /**
  * Versión resumida de una patente. Refleja las columnas devueltas por
  * `SUMMARY_COLUMNS` en el backend; incluye los campos nuevos (`apc`, `ww`,
@@ -117,7 +124,7 @@ export async function fetchPatents(
 
 export async function fetchPatentById(id: number): Promise<Patent> {
   const res = await fetch(`${API_URL}/patentes/${id}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Error ${res.status}`);
+  if (!res.ok) throw new ApiResponseError(res.status);
   return res.json();
 }
 

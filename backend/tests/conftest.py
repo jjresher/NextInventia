@@ -63,7 +63,7 @@ def mock_supabase():
     Cadenas cubiertas:
       get_all:   .table().select("id", count="exact").execute()             → count
                  .table().select(cols).order().range().execute()             → data
-      get_by_id: .table().select().eq().single().execute()                  → single row
+      get_by_id: .table().select().eq().maybe_single().execute()            → zero/one row
       search:    .table().select("id", count="exact").or_().execute()       → count
                  .table().select(cols).or_().order().range().execute()      → data
     """
@@ -88,7 +88,7 @@ def mock_supabase():
     # --- get_by_id ---
     (table.select.return_value
           .eq.return_value
-          .single.return_value
+          .maybe_single.return_value
           .execute.return_value) = single_resp
 
     # --- search: count ---
