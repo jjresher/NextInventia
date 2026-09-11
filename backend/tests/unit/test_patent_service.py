@@ -37,14 +37,11 @@ class TestGetAll:
 
     def test_get_all_devuelve_lista_vacia_cuando_tabla_esta_vacia(self, mock_supabase):
         """Flujo alternativo: tabla vacía → ([], 0) sin lanzar excepción."""
-        mock_supabase.table.return_value.select.return_value.execute.return_value = (
-            MagicMock(count=0)
-        )
         (mock_supabase.table.return_value
              .select.return_value
              .order.return_value
              .range.return_value
-             .execute.return_value) = MagicMock(data=[])
+             .execute.return_value) = MagicMock(data=[], count=0)
 
         service = PatentService(mock_supabase)
         data, total = service.get_all(page=1, page_size=50)
@@ -91,11 +88,26 @@ class TestGetAll:
 
         mock_supabase.table.assert_called_with("patentes")
 
+    def test_get_all_obtiene_datos_y_conteo_en_una_sola_consulta(self, mock_supabase):
+        """El listado no repite una consulta exclusiva para el conteo."""
+        service = PatentService(mock_supabase)
+
+        service.get_all(page=2, page_size=10)
+
+        mock_supabase.table.assert_called_once_with("patentes")
+        mock_supabase.table.return_value.select.assert_called_once_with(
+            SUMMARY_COLUMNS, count="exact"
+        )
+        query = (mock_supabase.table.return_value.select.return_value
+                 .order.return_value.range.return_value)
+        query.execute.assert_called_once_with()
+
     # --- Test existente en tests/db-patents (se conserva sin modificar) ---
     def test_get_all_propaga_error_de_conexion(self):
         """Flujo alternativo: error de conexión con Supabase → se propaga la excepción."""
         mock_client = MagicMock()
-        mock_client.table.return_value.select.return_value.execute.side_effect = (
+        (mock_client.table.return_value.select.return_value.order.return_value
+         .range.return_value.execute.side_effect) = (
             ConnectionError("Supabase no responde")
         )
         service = PatentService(mock_client)

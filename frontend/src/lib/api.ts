@@ -1,4 +1,6 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const CATALOG_REVALIDATE_SECONDS = 60;
+const PATENT_REVALIDATE_SECONDS = 300;
 
 export class ApiResponseError extends Error {
   constructor(public readonly status: number) {
@@ -117,13 +119,17 @@ export async function fetchPatents(
   });
   if (query) params.set("q", query);
 
-  const res = await fetch(`${API_URL}/patentes/?${params}`, { cache: "no-store" });
+  const res = await fetch(`${API_URL}/patentes/?${params}`, {
+    next: { revalidate: CATALOG_REVALIDATE_SECONDS },
+  });
   if (!res.ok) throw new Error(`Error ${res.status}`);
   return res.json();
 }
 
 export async function fetchPatentById(id: number): Promise<Patent> {
-  const res = await fetch(`${API_URL}/patentes/${id}`, { cache: "no-store" });
+  const res = await fetch(`${API_URL}/patentes/${id}`, {
+    next: { revalidate: PATENT_REVALIDATE_SECONDS },
+  });
   if (!res.ok) throw new ApiResponseError(res.status);
   return res.json();
 }
@@ -160,7 +166,7 @@ export async function fetchSimilarPatents(
 ): Promise<SimilarPatentsResponse> {
   const res = await fetch(
     `${API_URL}/patentes/${id}/similares?top_k=${topK}`,
-    { cache: "no-store" }
+    { next: { revalidate: PATENT_REVALIDATE_SECONDS } }
   );
   if (!res.ok) throw new Error(`Error ${res.status}`);
   return res.json();

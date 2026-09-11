@@ -72,6 +72,11 @@ hasta 20 resultados híbridos sin paginación. El chat toma el contexto de la
 búsqueda o de la patente abierta. En `sessionStorage` guarda un objeto versionado
 con la consulta y los IDs; el backend rehidrata los datos antes de llamar al modelo.
 
+Las lecturas del catálogo se revalidan cada 60 segundos y los detalles y similares
+cada 5 minutos. Las búsquedas y demás operaciones `POST` no se almacenan en caché.
+En búsquedas, el total del catálogo se solicita en paralelo con los resultados; en
+el detalle, la patente y sus similares también comienzan a cargarse juntas.
+
 ## Verificación y producción
 
 ```powershell
