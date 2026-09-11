@@ -22,6 +22,10 @@ from google import genai
 from google.genai.errors import ClientError
 from google.genai.types import ContentListUnion
 
+
+class GeminiQuotaExhaustedError(RuntimeError):
+    """All configured Gemini models are locally or remotely rate limited."""
+
 # ---------------------------------------------------------------------------
 # Configuración de límites reales por modelo (free tier)
 # Ajustar estos valores si Google cambia las cuotas.
@@ -154,7 +158,7 @@ class GeminiFallbackClient:
                     continue
                 raise  # error real de la API, no de cuota: no tiene sentido cambiar de modelo
 
-        raise RuntimeError(
+        raise GeminiQuotaExhaustedError(
             "Todos los modelos de la cascada agotaron su cuota "
             f"(RPM/RPD). Último error: {last_error}"
         )
