@@ -32,23 +32,21 @@ export default async function PatentDetailPage({ params }: Props) {
 
   if (isNaN(patentId)) notFound();
 
-  let patent;
-  try {
-    patent = await fetchPatentById(patentId);
-  } catch (error) {
+  const [patentResult, similarResult] = await Promise.allSettled([
+    fetchPatentById(patentId),
+    fetchSimilarPatents(patentId, 8),
+  ]);
+
+  if (patentResult.status === "rejected") {
+    const error = patentResult.reason;
     if (error instanceof ApiResponseError && error.status === 404) notFound();
     throw error;
   }
 
-  // Carga "patentes similares" después del detalle. Si el embedding aún no existe
-  // o el RPC falla, ignoramos y simplemente no mostramos la sección.
-  let similar: SimilarPatent[] = [];
-  try {
-    const sim = await fetchSimilarPatents(patentId, 8);
-    similar = sim.data;
-  } catch {
-    similar = [];
-  }
+  const patent = patentResult.value;
+  // Si el embedding aún no existe o el RPC falla, mostramos el detalle sin similares.
+  const similar: SimilarPatent[] =
+    similarResult.status === "fulfilled" ? similarResult.value.data : [];
 
   const topic = patent.ww || patent.ws || "";
   const status = patent.lg_st || patent.ls || "";

@@ -61,8 +61,8 @@ def mock_supabase():
     ya configuradas por defecto. Cada test puede sobreescribir lo que necesite.
 
     Cadenas cubiertas:
-      get_all:   .table().select("id", count="exact").execute()             → count
-                 .table().select(cols).order().range().execute()             → data
+      get_all:   .table().select(cols, count="exact").order().range()
+                 .execute()                                                   → data + count
       get_by_id: .table().select().eq().maybe_single().execute()            → zero/one row
       search:    .table().select("id", count="exact").or_().execute()       → count
                  .table().select(cols).or_().order().range().execute()      → data
@@ -71,15 +71,12 @@ def mock_supabase():
 
     # Respuestas por defecto
     count_resp = MagicMock(count=len(PATENT_LIST))
-    data_resp  = MagicMock(data=PATENT_LIST)
+    data_resp  = MagicMock(data=PATENT_LIST, count=len(PATENT_LIST))
     single_resp = MagicMock(data=PATENT_SAMPLE)
 
     table = mock.table.return_value
 
-    # --- get_all: count ---
-    table.select.return_value.execute.return_value = count_resp
-
-    # --- get_all: data ---
+    # --- get_all: data + count ---
     (table.select.return_value
           .order.return_value
           .range.return_value

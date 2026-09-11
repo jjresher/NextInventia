@@ -29,10 +29,12 @@ export default async function HomePage({ searchParams }: Props) {
   try {
     if (query) {
       // Con query → búsqueda híbrida PostgreSQL FTS + Sentence-BERT con RRF.
-      const sem = await searchSemantic(query, 20);
+      const [sem, totalsResp] = await Promise.all([
+        searchSemantic(query, 20),
+        fetchPatents(1, 1),
+      ]);
       semanticResults = sem.data;
       total = sem.count;
-      const totalsResp = await fetchPatents(1, 1);
       listResponse = { data: [], count: totalsResp.count, page_size: 20 };
     } else {
       // Sin query → listado paginado normal.

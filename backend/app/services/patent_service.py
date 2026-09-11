@@ -16,19 +16,14 @@ class PatentService:
 
     def get_all(self, page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
         offset = (page - 1) * page_size
-
-        count_resp = self._client.table(self._table).select("id", count="exact").execute()
-        total = count_resp.count or 0
-
-        data_resp = (
+        response = (
             self._client.table(self._table)
-            .select(SUMMARY_COLUMNS)
+            .select(SUMMARY_COLUMNS, count="exact")
             .order("id")
             .range(offset, offset + page_size - 1)
             .execute()
         )
-
-        return data_resp.data, total
+        return response.data or [], response.count or 0
 
     def get_by_id(self, patent_id: int) -> dict | None:
         resp = (

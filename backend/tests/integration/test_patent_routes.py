@@ -48,11 +48,9 @@ class TestListPatentes:
             {"id": 1, "pn": "US123", "ti": "Invento 1"},
             {"id": 2, "pn": "US456", "ti": "Invento 2"},
         ]
-        count_response = MagicMock(count=2)
-        data_response = MagicMock(data=fake_rows)
+        data_response = MagicMock(data=fake_rows, count=2)
 
         table = mock_supabase.table.return_value
-        table.select.return_value.execute.return_value = count_response
         (table.select.return_value
               .order.return_value
               .range.return_value
@@ -71,11 +69,10 @@ class TestListPatentes:
     def test_list_patentes_tabla_vacia_devuelve_data_vacia(self, client, mock_supabase):
         """Flujo alternativo: tabla vacía → 200 con data=[] y count=0."""
         table = mock_supabase.table.return_value
-        table.select.return_value.execute.return_value = MagicMock(count=0)
         (table.select.return_value
               .order.return_value
               .range.return_value
-              .execute.return_value) = MagicMock(data=[])
+              .execute.return_value) = MagicMock(data=[], count=0)
 
         response = client.get("/patentes/")
 
