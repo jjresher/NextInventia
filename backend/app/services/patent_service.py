@@ -35,7 +35,7 @@ class PatentService:
             self._client.table(self._table)
             .select(ALL_COLUMNS)
             .eq("id", patent_id)
-            .single()
+            .maybe_single()
             .execute()
         )
         return resp.data

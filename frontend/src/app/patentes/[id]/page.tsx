@@ -1,6 +1,11 @@
 import Link from "next/link";
 import BackButton from "@/components/BackButton";
-import { fetchPatentById, fetchSimilarPatents, type SimilarPatent } from "@/lib/api";
+import {
+  ApiResponseError,
+  fetchPatentById,
+  fetchSimilarPatents,
+  type SimilarPatent,
+} from "@/lib/api";
 import { notFound } from "next/navigation";
 import { getSafeEspacenetUrl } from "@/lib/urlSafety.mjs";
 import {
@@ -30,8 +35,9 @@ export default async function PatentDetailPage({ params }: Props) {
   let patent;
   try {
     patent = await fetchPatentById(patentId);
-  } catch {
-    notFound();
+  } catch (error) {
+    if (error instanceof ApiResponseError && error.status === 404) notFound();
+    throw error;
   }
 
   // Carga "patentes similares" después del detalle. Si el embedding aún no existe

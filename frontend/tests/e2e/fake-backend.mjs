@@ -26,6 +26,12 @@ createServer((request, response) => {
     return send(response, { data: [patent], count: 1, page: 1, page_size: 20 });
   }
   if (request.url === "/patentes/1") return send(response, patent);
+  if (request.url === "/patentes/404") {
+    return send(response, { detail: "Patente no encontrada" }, 404);
+  }
+  if (request.url === "/patentes/500") {
+    return send(response, { detail: "Fallo temporal" }, 500);
+  }
   if (request.url?.startsWith("/patentes/1/similares")) {
     return send(response, { patent_id: 1, data: [], count: 0 });
   }
@@ -51,6 +57,7 @@ createServer((request, response) => {
       keywords: ["engine control"],
       google_patents_query: "CPC=F02D41/00",
       notes: "Respuesta falsa para E2E.",
+      local_fallback: false,
     });
   }
   return send(response, { detail: "Not found" }, 404);

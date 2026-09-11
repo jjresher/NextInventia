@@ -128,13 +128,23 @@ class TestGetById:
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
-             .single.return_value
+             .maybe_single.return_value
              .execute.return_value) = MagicMock(data=None)
 
         service = PatentService(mock_supabase)
         result = service.get_by_id(99999)
 
         assert result is None
+
+    def test_get_by_id_propagates_timeout(self, mock_supabase):
+        (mock_supabase.table.return_value
+             .select.return_value
+             .eq.return_value
+             .maybe_single.return_value
+             .execute.side_effect) = TimeoutError("Supabase timeout")
+
+        with pytest.raises(TimeoutError, match="Supabase timeout"):
+            PatentService(mock_supabase).get_by_id(1)
 
     def test_get_by_id_filtra_por_el_id_correcto(self, mock_supabase):
         """La query usa .eq('id', patent_id) con el id exacto recibido."""
