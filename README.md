@@ -110,14 +110,25 @@ py -m venv .venv
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+pip install --require-hashes -r requirements-dev.lock
 ```
 
-`requirements-dev.txt` incluye las dependencias de ejecución y las herramientas de
-pruebas. Para una instalación de producción puede usarse solamente:
+Los archivos `requirements*.txt` declaran rangos deliberados de dependencias
+directas; los `requirements*.lock` fijan versiones transitivas y hashes para Python
+3.13. Producción instala solamente:
 
 ```powershell
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
+```
+
+Para ejecutar únicamente los procesos de `backend/exel/`, use
+`requirements-offline.lock`. Al cambiar un archivo de entrada, regenere y revise los
+locks desde `backend/` con la versión de `uv` fijada en el lock de desarrollo:
+
+```powershell
+uv pip compile --universal --generate-hashes --python-version 3.13 --output-file requirements.lock requirements.txt
+uv pip compile --universal --generate-hashes --python-version 3.13 --output-file requirements-offline.lock requirements-offline.txt
+uv pip compile --universal --generate-hashes --python-version 3.13 --output-file requirements-dev.lock requirements-dev.txt
 ```
 
 En Linux o macOS, la activación equivalente es:
@@ -126,7 +137,7 @@ En Linux o macOS, la activación equivalente es:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+pip install --require-hashes -r requirements-dev.lock
 ```
 
 ### 3. Configurar el backend
@@ -441,7 +452,7 @@ python -m pytest -q
 python -m ruff check app exel tests
 
 # Auditoría de dependencias de producción
-python -m pip_audit -r requirements.txt
+python -m pip_audit -r requirements.lock --require-hashes
 ```
 
 Los tests usan clientes falsos; no realizan llamadas reales a Supabase ni Gemini.
@@ -491,7 +502,7 @@ Reinicie los procesos después de cambiar variables de entorno.
 
 ### Backend
 
-- Instale `backend/requirements.txt`.
+- Instale `backend/requirements.lock` con `pip install --require-hashes`.
 - Configure todas las variables de `backend/.env` en el proveedor de hosting.
 - Proporcione el directorio `backend/data/cpc_index/` como volumen o artefacto si se
   usará la clasificación CPC.
