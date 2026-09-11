@@ -1,10 +1,15 @@
 import { expect, test } from "@playwright/test";
 
 test("muestra el catálogo servido por la API falsa", async ({ page }) => {
-  await page.goto("/");
+  const response = await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Buscador de Patentes" })).toBeVisible();
   await expect(page.getByText("Patente de prueba")).toBeVisible();
+  expect(response?.headers()["content-security-policy-report-only"]).toContain(
+    "frame-ancestors 'none'"
+  );
+  expect(response?.headers()["x-frame-options"]).toBe("DENY");
+  expect(response?.headers()["strict-transport-security"]).toContain("max-age=31536000");
 });
 
 test("abre una patente y conversa sin servicios reales", async ({ page }) => {

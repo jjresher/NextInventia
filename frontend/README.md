@@ -38,6 +38,19 @@ npm run dev -- --hostname 0.0.0.0 --port 3000
 
 Configure también CORS y la escucha de red del backend según el README principal.
 
+## Headers de seguridad
+
+`next.config.ts` aplica a todas las rutas una CSP en modo report-only, protección
+contra framing y MIME sniffing, una política de referencias y una política de
+permisos que deshabilita cámara, geolocalización y micrófono. `connect-src` permite
+solo el propio frontend y el origen de `NEXT_PUBLIC_API_URL`; no admite comodines.
+
+La CSP permanece en report-only durante el MVP para observar incompatibilidades
+antes de bloquear recursos. Scripts y estilos inline siguen permitidos porque los
+usa el runtime de Next.js; deben retirarse de la política cuando se adopten nonces.
+HSTS se envía únicamente en builds de producción, donde el sitio debe publicarse
+exclusivamente mediante HTTPS. Desarrollo omite HSTS para no forzar HTTPS local.
+
 ## Rutas y componentes
 
 | Ruta | Función |
