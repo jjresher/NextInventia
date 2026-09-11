@@ -1,14 +1,11 @@
-fastapi
-google-genai
-uvicorn[standard]
-supabase
-pydantic
-pydantic-settings
-python-dotenv
-pandas
-openpyxl
-
-sentence-transformers
-scikit-learn
-numpy
-tqdm
+# Dependencias directas del servicio. Los rangos permiten actualizaciones
+# compatibles deliberadas; requirements.lock fija la instalación reproducible.
+fastapi>=0.115,<1
+google-genai>=1.0,<2
+uvicorn[standard]>=0.30,<1
+supabase>=2.0,<3
+pydantic>=2.10,<3
+pydantic-settings>=2.7,<3
+python-dotenv>=1.0,<2
+sentence-transformers>=3.3,<6
+numpy>=2.0,<3

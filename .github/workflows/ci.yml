@@ -25,12 +25,12 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: backend/requirements-dev.txt
+          cache-dependency-path: backend/requirements-dev.lock
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip install --require-hashes -r requirements-dev.lock
       - run: python -m pytest
       - run: python -m ruff check app exel tests
-      - run: python -m pip_audit -r requirements.txt
+      - run: python -m pip_audit -r requirements.lock --require-hashes
 
   frontend:
     name: Frontend
