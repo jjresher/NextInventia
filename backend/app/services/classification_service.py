@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -17,6 +18,7 @@ from app.models.classification import (
     CpcClassificationResponse,
     RecommendedCpcCode,
 )
+from app.observability import NULL_METRICS, MetricsRegistry, log_event
 from app.services.cpc_catalog import (
     CpcCatalog,
     CpcCatalogError,
@@ -71,6 +73,7 @@ class ClassificationService:
         embeddings_path: Path = DEFAULT_EMBEDDINGS_PATH,
         manifest_path: Path = DEFAULT_MANIFEST_PATH,
         gemini_client: Any | None = None,
+        metrics: MetricsRegistry = NULL_METRICS,
     ) -> None:
         self.catalog_path = Path(catalog_path)
         self.embeddings_path = Path(embeddings_path)
@@ -79,6 +82,7 @@ class ClassificationService:
         self._catalog: CpcCatalog | None = None
         self._embeddings: np.ndarray | None = None
         self._load_lock = Lock()
+        self._metrics = metrics
 
     def check_index(self) -> None:
         """Validate and memory-map the CPC index without running classification."""
@@ -104,40 +108,67 @@ class ClassificationService:
             json.JSONDecodeError,
             GeminiResponseError,
         ) as exc:
-            logger.warning(
-                "classification_fallback provider=gemini local_fallback=true error_type=%s",
-                type(exc).__name__,
+            self._metrics.increment(
+                "provider_fallbacks_total",
+                dependency="gemini",
+                model="classification",
+                source=type(exc).__name__,
+            )
+            log_event(
+                logger,
+                logging.WARNING,
+                "classification_fallback",
+                dependency="gemini",
+                error_type=type(exc).__name__,
+                source="local_fallback",
+                status="degraded",
             )
             return self._fallback_response(description, candidates, top_k)
 
     def retrieve(self, description: str, top_k: int = 40) -> list[CpcCandidate]:
-        catalog, embeddings = self._load_index()
-        query_embedding = np.asarray(encode_query(description), dtype=np.float32)
-        if query_embedding.ndim != 1 or query_embedding.shape[0] != embeddings.shape[1]:
-            raise CpcIndexError(
-                "La dimension del embedding de consulta no coincide con el indice CPC"
+        started_at = time.perf_counter()
+        self._metrics.add_gauge("dependency_requests_in_flight", 1, dependency="cpc")
+        try:
+            catalog, embeddings = self._load_index()
+            query_embedding = np.asarray(encode_query(description), dtype=np.float32)
+            if (
+                query_embedding.ndim != 1
+                or query_embedding.shape[0] != embeddings.shape[1]
+            ):
+                raise CpcIndexError(
+                    "La dimension del embedding de consulta no coincide con el indice CPC"
+                )
+
+            scores = embeddings @ query_embedding
+            eligible_indexes = catalog.eligible_indexes
+            limit = min(max(top_k, 1), eligible_indexes.size)
+            if limit == 0:
+                return []
+
+            eligible_scores = scores[eligible_indexes]
+            if limit < eligible_scores.size:
+                local_indexes = np.argpartition(eligible_scores, -limit)[-limit:]
+            else:
+                local_indexes = np.arange(eligible_scores.size)
+            local_indexes = local_indexes[
+                np.argsort(eligible_scores[local_indexes])[::-1]
+            ]
+            indexes = eligible_indexes[local_indexes]
+
+            return [
+                self._candidate_from_index(catalog, scores, int(index))
+                for index in indexes
+            ]
+        finally:
+            self._metrics.add_gauge(
+                "dependency_requests_in_flight", -1, dependency="cpc"
             )
-
-        scores = embeddings @ query_embedding
-        eligible_indexes = catalog.eligible_indexes
-        limit = min(max(top_k, 1), eligible_indexes.size)
-        if limit == 0:
-            return []
-
-        eligible_scores = scores[eligible_indexes]
-        if limit < eligible_scores.size:
-            local_indexes = np.argpartition(eligible_scores, -limit)[-limit:]
-        else:
-            local_indexes = np.arange(eligible_scores.size)
-        local_indexes = local_indexes[
-            np.argsort(eligible_scores[local_indexes])[::-1]
-        ]
-        indexes = eligible_indexes[local_indexes]
-
-        return [
-            self._candidate_from_index(catalog, scores, int(index))
-            for index in indexes
-        ]
+            self._metrics.observe(
+                "dependency_request_duration_seconds",
+                time.perf_counter() - started_at,
+                dependency="cpc",
+                operation="retrieve",
+            )
 
     def _candidate_from_index(
         self,
@@ -164,12 +195,14 @@ class ClassificationService:
             if self._catalog is not None and self._embeddings is not None:
                 return self._catalog, self._embeddings
 
+            started_at = time.perf_counter()
             for path in (
                 self.catalog_path,
                 self.embeddings_path,
                 self.manifest_path,
             ):
                 if not path.exists():
+                    self._record_index_load("unavailable", started_at, "MissingArtifact")
                     raise CpcIndexError(
                         f"Falta el artefacto CPC {path}. Ejecute exel/index_cpc_codes.py."
                     )
@@ -183,12 +216,37 @@ class ClassificationService:
                     allow_pickle=False,
                 )
             except (CpcCatalogError, OSError, ValueError, json.JSONDecodeError) as exc:
+                self._record_index_load("error", started_at, type(exc).__name__)
                 raise CpcIndexError(f"No se pudo cargar el indice CPC: {exc}") from exc
 
-            self._validate_index(manifest, catalog, embeddings)
+            try:
+                self._validate_index(manifest, catalog, embeddings)
+            except CpcIndexError as exc:
+                self._record_index_load("invalid", started_at, type(exc).__name__)
+                raise
             self._catalog = catalog
             self._embeddings = embeddings
+            self._record_index_load("ready", started_at)
             return catalog, embeddings
+
+    def _record_index_load(
+        self,
+        status: str,
+        started_at: float,
+        error_type: str = "none",
+    ) -> None:
+        duration = time.perf_counter() - started_at
+        self._metrics.increment("cpc_index_loads_total", status=status)
+        self._metrics.observe("cpc_index_load_duration_seconds", duration, status=status)
+        log_event(
+            logger,
+            logging.INFO if status == "ready" else logging.WARNING,
+            "cpc_index_load",
+            dependency="cpc",
+            duration_ms=round(duration * 1000, 2),
+            error_type=error_type,
+            status=status,
+        )
 
     def _validate_index(
         self,

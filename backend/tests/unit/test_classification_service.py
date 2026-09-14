@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from app.observability import MetricsRegistry
 from app.services.classification_service import (
     ClassificationService,
     CpcIndexError,
@@ -114,15 +115,24 @@ def test_retrieve_orders_only_group_codes(local_index, monkeypatch):
     assert isinstance(service._embeddings, np.memmap)
 
 
-def test_missing_index_has_clear_error(tmp_path):
+def test_missing_index_has_clear_error_and_safe_signal(tmp_path, caplog):
+    metrics = MetricsRegistry()
     service = ClassificationService(
         catalog_path=tmp_path / "missing.csv",
         embeddings_path=tmp_path / "missing.npy",
         manifest_path=tmp_path / "missing.json",
+        metrics=metrics,
     )
 
     with pytest.raises(CpcIndexError, match="Falta el artefacto CPC"):
         service.retrieve("motor")
+
+    assert any(
+        item["name"] == "cpc_index_loads_total"
+        and item["labels"] == {"status": "unavailable"}
+        for item in metrics.snapshot()["counters"]
+    )
+    assert "missing.csv" not in caplog.text
 
 
 def test_changed_catalog_is_rejected(local_index):
@@ -205,7 +215,12 @@ def test_fallback_when_gemini_quota_is_exhausted(local_index, monkeypatch, caplo
     )
     client = MagicMock()
     client.generate.side_effect = GeminiQuotaExhaustedError("unavailable")
-    service = ClassificationService(*local_index, gemini_client=client)
+    metrics = MetricsRegistry()
+    service = ClassificationService(
+        *local_index,
+        gemini_client=client,
+        metrics=metrics,
+    )
 
     result = service.recommend("control electronico e inyeccion", top_k=2)
 
@@ -215,6 +230,10 @@ def test_fallback_when_gemini_quota_is_exhausted(local_index, monkeypatch, caplo
     assert result.local_fallback is True
     assert "classification_fallback" in caplog.text
     assert "control electronico" not in caplog.text
+    assert any(
+        item["name"] == "provider_fallbacks_total"
+        for item in metrics.snapshot()["counters"]
+    )
 
 
 def test_fallback_when_gemini_times_out(local_index, monkeypatch):

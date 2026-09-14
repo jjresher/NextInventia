@@ -426,6 +426,11 @@ envía solicitudes a Gemini. La clasificación devuelve 503 cuando faltan artefa
 del índice o no son compatibles; los parámetros que incumplen los contratos
 devuelven 422.
 
+`GET /metrics` expone contadores, concurrencia y duraciones acotadas para HTTP,
+Supabase, Gemini y CPC. Son métricas en memoria por proceso y no incluyen entradas
+del usuario. La política de logs, redacción y alertas mínimas está documentada en
+[Observabilidad operativa](docs/operations/observability.md).
+
 Ejemplo de clasificación CPC:
 
 ```powershell

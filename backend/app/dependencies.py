@@ -19,6 +19,7 @@ def get_patent_service(
         client,
         retry_attempts=settings.external_retry_attempts,
         retry_backoff_seconds=settings.external_retry_backoff_seconds,
+        metrics=request.app.state.metrics,
     )
 
 

@@ -252,7 +252,7 @@ def test_chat_returns_safe_500_with_correlatable_redacted_log(
     assert body["code"] == "INTERNAL_ERROR"
     assert body["correlation_id"] == response.headers["x-correlation-id"]
     assert body["correlation_id"] in caplog.text
-    assert "stack_trace=" in caplog.text
+    assert '"stack_trace":' in caplog.text
     assert "ValueError" in caplog.text
     assert sensitive_value not in caplog.text
     assert sensitive_value not in response.text

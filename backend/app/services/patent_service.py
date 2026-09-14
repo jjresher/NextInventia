@@ -6,6 +6,7 @@ import httpx
 from supabase import Client
 
 from app.errors import ExternalServiceTimeoutError
+from app.observability import NULL_METRICS, MetricsRegistry
 from app.services.embedding_service import encode_query
 
 # Columnas devueltas en listados/búsquedas.
@@ -23,30 +24,72 @@ class PatentService:
         retry_attempts: int = 2,
         retry_backoff_seconds: float = 0.2,
         sleep: Callable[[float], None] = time.sleep,
+        metrics: MetricsRegistry = NULL_METRICS,
     ):
         self._client = client
         self._table = "patentes"
         self._retry_attempts = retry_attempts
         self._retry_backoff_seconds = retry_backoff_seconds
         self._sleep = sleep
+        self._metrics = metrics
 
-    def _execute_read(self, operation: Callable[[], Any]) -> Any:
+    def _execute_read(self, operation_name: str, operation: Callable[[], Any]) -> Any:
         """Retry bounded, idempotent reads on transient transport failures."""
-        for attempt in range(self._retry_attempts):
-            try:
-                return operation()
-            except (TimeoutError, httpx.TimeoutException) as exc:
-                if attempt + 1 == self._retry_attempts:
-                    raise ExternalServiceTimeoutError("Supabase") from exc
-            except (ConnectionError, httpx.TransportError):
-                if attempt + 1 == self._retry_attempts:
-                    raise
-            self._sleep(self._retry_backoff_seconds * (2**attempt))
-        raise AssertionError("unreachable")
+        started_at = time.perf_counter()
+        self._metrics.add_gauge("dependency_requests_in_flight", 1, dependency="supabase")
+        try:
+            for attempt in range(self._retry_attempts):
+                try:
+                    result = operation()
+                    self._metrics.increment(
+                        "dependency_requests_total",
+                        dependency="supabase",
+                        operation=operation_name,
+                        status="ok",
+                    )
+                    return result
+                except (TimeoutError, httpx.TimeoutException) as exc:
+                    if attempt + 1 == self._retry_attempts:
+                        self._metrics.increment(
+                            "dependency_requests_total",
+                            dependency="supabase",
+                            operation=operation_name,
+                            status="timeout",
+                        )
+                        raise ExternalServiceTimeoutError("Supabase") from exc
+                except (ConnectionError, httpx.TransportError):
+                    if attempt + 1 == self._retry_attempts:
+                        self._metrics.increment(
+                            "dependency_requests_total",
+                            dependency="supabase",
+                            operation=operation_name,
+                            status="error",
+                        )
+                        raise
+                self._metrics.increment(
+                    "dependency_retries_total",
+                    dependency="supabase",
+                    operation=operation_name,
+                )
+                self._sleep(self._retry_backoff_seconds * (2**attempt))
+            raise AssertionError("unreachable")
+        finally:
+            self._metrics.add_gauge(
+                "dependency_requests_in_flight",
+                -1,
+                dependency="supabase",
+            )
+            self._metrics.observe(
+                "dependency_request_duration_seconds",
+                time.perf_counter() - started_at,
+                dependency="supabase",
+                operation=operation_name,
+            )
 
     def get_all(self, page: int = 1, page_size: int = 50) -> tuple[list[dict], int]:
         offset = (page - 1) * page_size
         response = self._execute_read(
+            "list",
             lambda: self._client.table(self._table)
             .select(SUMMARY_COLUMNS, count="exact")
             .order("id")
@@ -57,6 +100,7 @@ class PatentService:
 
     def get_by_id(self, patent_id: int) -> dict | None:
         resp = self._execute_read(
+            "detail",
             lambda: self._client.table(self._table)
             .select(ALL_COLUMNS)
             .eq("id", patent_id)
@@ -71,6 +115,7 @@ class PatentService:
             return []
         columns = ALL_COLUMNS if len(patent_ids) == 1 else SUMMARY_COLUMNS
         resp = self._execute_read(
+            "context",
             lambda: self._client.table(self._table)
             .select(columns)
             .in_("id", patent_ids)
@@ -87,6 +132,7 @@ class PatentService:
         invoquen PostgREST sin pasar por la validación de FastAPI.
         """
         resp = self._execute_read(
+            "lexical_search",
             lambda: self._client.rpc(
                 "search_patentes_lexical",
                 {
@@ -107,6 +153,7 @@ class PatentService:
         """
         query_embedding = encode_query(query)
         resp = self._execute_read(
+            "semantic_search",
             lambda: self._client.rpc(
                 "search_patentes_hybrid",
                 {
@@ -122,6 +169,7 @@ class PatentService:
         """KNN puro sobre el embedding de la patente dada. Devuelve las
         `top_k` patentes más cercanas (excluyendo la propia)."""
         resp = self._execute_read(
+            "similar_patents",
             lambda: self._client.rpc(
                 "patentes_similares",
                 {"patent_id": patent_id, "top_k": top_k},
