@@ -5,15 +5,13 @@ from google.genai import types
 from google.genai.errors import ClientError
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from app.config import settings
-from app.dependencies import get_patent_service
+from app.dependencies import get_gemini_client, get_patent_service
 from app.errors import ApiError
 from app.services.gemini_client import GeminiFallbackClient
 from app.services.patent_service import PatentService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-_client = GeminiFallbackClient(api_key=settings.gemini_api_key)
 MAX_HISTORY_TURNS = 12
 MAX_MESSAGE_CHARS = 2_000
 MAX_CONVERSATION_CHARS = 12_000
@@ -139,7 +137,11 @@ def _build_context_block(patents: list[dict]) -> str:
 
 
 @router.post("/", response_model=ChatResponse)
-def chat(req: ChatRequest, service: PatentService = Depends(get_patent_service)):
+def chat(
+    req: ChatRequest,
+    service: PatentService = Depends(get_patent_service),
+    client: GeminiFallbackClient = Depends(get_gemini_client),
+):
     patents = service.get_by_ids(req.patent_ids)
     if len(patents) != len(req.patent_ids):
         raise ApiError(
@@ -167,7 +169,7 @@ def chat(req: ChatRequest, service: PatentService = Depends(get_patent_service))
     config = types.GenerateContentConfig(system_instruction=system_with_context)
 
     try:
-        reply = _client.generate(contents, config=config)
+        reply = client.generate(contents, config=config)
     except (RuntimeError, ClientError) as exc:
         # RuntimeError: la cascada agoto la cuota de todos los modelos.
         # ClientError: error real de la API (no de cuota, GeminiFallbackClient
