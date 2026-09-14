@@ -12,7 +12,6 @@ import numpy as np
 from google.genai import types
 from google.genai.errors import APIError
 
-from app.config import settings
 from app.models.classification import (
     CpcClassificationPathItem,
     CpcClassificationResponse,
@@ -26,7 +25,7 @@ from app.services.cpc_catalog import (
     load_cpc_catalog,
 )
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME, encode_query
-from app.services.gemini_client import GeminiFallbackClient, GeminiQuotaExhaustedError
+from app.services.gemini_client import GeminiQuotaExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +79,10 @@ class ClassificationService:
         self._catalog: CpcCatalog | None = None
         self._embeddings: np.ndarray | None = None
         self._load_lock = Lock()
+
+    def check_index(self) -> None:
+        """Validate and memory-map the CPC index without running classification."""
+        self._load_index()
 
     def recommend(self, description: str, top_k: int = 8) -> CpcClassificationResponse:
         candidates = self.retrieve(description, GEMINI_CANDIDATE_COUNT)
@@ -211,7 +214,7 @@ class ClassificationService:
 
     def _get_gemini_client(self) -> Any:
         if self._gemini_client is None:
-            self._gemini_client = GeminiFallbackClient(api_key=settings.gemini_api_key)
+            raise RuntimeError("Gemini client is not configured")
         return self._gemini_client
 
     def _generate_with_gemini(

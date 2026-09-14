@@ -4,14 +4,18 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from google.genai.errors import ClientError
 
-import app.routes.chat as chat_module
+from app.dependencies import get_gemini_client
 from app.main import app
+
+
+def use_fake_gemini(fake_client):
+    app.dependency_overrides[get_gemini_client] = lambda: fake_client
 
 
 def test_chat_happy_path(client, monkeypatch):
     fake_client = MagicMock()
     fake_client.generate.return_value = "Respuesta de PatentBot."
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post("/chat/", json={"message": "Hola"})
 
@@ -23,7 +27,7 @@ def test_chat_happy_path(client, monkeypatch):
 def test_chat_sends_history_as_content_turns(client, monkeypatch):
     fake_client = MagicMock()
     fake_client.generate.return_value = "ok"
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post(
         "/chat/",
@@ -48,7 +52,7 @@ def test_chat_sends_history_as_content_turns(client, monkeypatch):
 def test_chat_rehydrates_single_patent_context(client, mock_supabase, monkeypatch):
     fake_client = MagicMock()
     fake_client.generate.return_value = "ok"
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
     patent = {
         "id": 42,
         "pn": "EP4208230B1",
@@ -78,7 +82,7 @@ def test_chat_rehydrates_single_patent_context(client, mock_supabase, monkeypatc
 
 def test_chat_rejects_client_supplied_patent_objects(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post(
         "/chat/",
@@ -96,7 +100,7 @@ def test_chat_returns_404_when_context_id_does_not_exist(
     client, mock_supabase, monkeypatch
 ):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
     (
         mock_supabase.table.return_value.select.return_value.in_.return_value.execute
     ).return_value = MagicMock(data=[])
@@ -111,7 +115,7 @@ def test_chat_returns_404_when_context_id_does_not_exist(
 
 def test_chat_rejects_invalid_role(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post(
         "/chat/",
@@ -127,7 +131,7 @@ def test_chat_rejects_invalid_role(client, monkeypatch):
 
 def test_chat_rejects_oversized_payload(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post("/chat/", json={"message": "x" * 2001})
 
@@ -137,7 +141,7 @@ def test_chat_rejects_oversized_payload(client, monkeypatch):
 
 def test_chat_rejects_too_many_history_turns(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
     history = [{"role": "user", "content": "hola"}] * 13
 
     response = client.post(
@@ -150,7 +154,7 @@ def test_chat_rejects_too_many_history_turns(client, monkeypatch):
 
 def test_chat_rejects_too_many_patent_ids(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post(
         "/chat/", json={"message": "Hola", "patent_ids": list(range(1, 22))}
@@ -162,7 +166,7 @@ def test_chat_rejects_too_many_patent_ids(client, monkeypatch):
 
 def test_chat_rejects_conversation_over_total_budget(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
     history = [{"role": "user", "content": "x" * 2000}] * 6
 
     response = client.post(
@@ -175,7 +179,7 @@ def test_chat_rejects_conversation_over_total_budget(client, monkeypatch):
 
 def test_chat_rejects_duplicate_patent_ids(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post(
         "/chat/", json={"message": "Hola", "patent_ids": [1, 1]}
@@ -190,7 +194,7 @@ def test_chat_returns_502_when_cascade_is_exhausted(client, monkeypatch):
     fake_client.generate.side_effect = RuntimeError(
         "Todos los modelos de la cascada agotaron su cuota"
     )
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post("/chat/", json={"message": "Hola"})
 
@@ -209,7 +213,7 @@ def test_chat_returns_502_on_real_client_error(client, monkeypatch):
         "error": {"message": "bad request", "status": "INVALID_ARGUMENT"}
     }
     fake_client.generate.side_effect = ClientError(400, response_stub)
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post("/chat/", json={"message": "Hola"})
 
@@ -223,7 +227,7 @@ def test_chat_returns_safe_500_with_correlatable_redacted_log(
     fake_client = MagicMock()
     sensitive_value = "prompt=secreto api_key=abc123 ruta=C:/privado"
     fake_client.generate.side_effect = ValueError(sensitive_value)
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     with caplog.at_level("ERROR", logger="app.errors"):
         safe_client = TestClient(app, raise_server_exceptions=False)
@@ -243,7 +247,7 @@ def test_chat_returns_safe_500_with_correlatable_redacted_log(
 
 def test_chat_rejects_missing_message(client, monkeypatch):
     fake_client = MagicMock()
-    monkeypatch.setattr(chat_module, "_client", fake_client)
+    use_fake_gemini(fake_client)
 
     response = client.post("/chat/", json={})
 

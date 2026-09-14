@@ -157,9 +157,10 @@ GEMINI_API_KEY=TU_CLAVE_DE_GEMINI
 
 # Origen exacto del frontend principal.
 FRONTEND_ORIGIN=http://localhost:3000
+APP_ENVIRONMENT=development
 
-# Permite localhost y redes privadas 10.x, 172.16-31.x y 192.168.x durante desarrollo.
-ALLOW_LOCAL_NETWORK_ORIGINS=true
+# Habilítelo solo para desarrollo desde otros equipos de la red privada.
+ALLOW_LOCAL_NETWORK_ORIGINS=false
 ```
 
 Notas:
@@ -406,9 +407,12 @@ un `code` legible por máquina y un `correlation_id`. Ese mismo identificador se
 expone en la cabecera `X-Correlation-ID` de todas las respuestas para poder
 relacionar un fallo público con el log interno sin publicar datos sensibles.
 
-`GET /` solo confirma que la API responde: no verifica Supabase, Gemini ni el
-índice CPC. La clasificación devuelve 503 cuando faltan artefactos del índice o
-no son compatibles; los parámetros que incumplen los contratos devuelven 422.
+`GET /` y `GET /health/live` son comprobaciones baratas de liveness y no consultan
+dependencias. `GET /health/ready` comprueba Supabase y el índice CPC, informa el
+estado de cada componente y devuelve 503 mientras alguno no esté disponible; no
+envía solicitudes a Gemini. La clasificación devuelve 503 cuando faltan artefactos
+del índice o no son compatibles; los parámetros que incumplen los contratos
+devuelven 422.
 
 Ejemplo de clasificación CPC:
 
@@ -494,11 +498,14 @@ npm run start
 3. Configure `NEXT_PUBLIC_API_URL=http://IP_DEL_BACKEND:8000`.
 4. Abra `http://IP_DEL_FRONTEND:3000` desde el otro dispositivo.
 
-El backend permite por defecto orígenes HTTP de `localhost`, `127.0.0.1` y rangos
-privados `10.x`, `172.16-31.x` y `192.168.x`. En producción configure un
-`FRONTEND_ORIGIN` exacto y use:
+El backend permite por defecto únicamente el `FRONTEND_ORIGIN` exacto. Para aceptar
+durante desarrollo orígenes HTTP de `localhost`, `127.0.0.1` y rangos privados
+`10.x`, `172.16-31.x` y `192.168.x`, habilite la opción explícitamente. En
+producción el regex de red privada permanece deshabilitado aunque se configure por
+error:
 
 ```dotenv
+APP_ENVIRONMENT=production
 ALLOW_LOCAL_NETWORK_ORIGINS=false
 ```
 
