@@ -1014,18 +1014,24 @@
   "paths": {
     "/": {
       "get": {
-        "operationId": "health_check__get",
+        "operationId": "liveness__get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Liveness  Get",
+                  "type": "object"
+                }
               }
             },
             "description": "Successful Response"
           }
         },
-        "summary": "Health Check"
+        "summary": "Liveness"
       }
     },
     "/chat/": {
@@ -1108,6 +1114,44 @@
         "tags": [
           "clasificacion"
         ]
+      }
+    },
+    "/health/live": {
+      "get": {
+        "operationId": "liveness_health_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Liveness Health Live Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness"
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "readiness_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness"
       }
     },
     "/patentes/": {
