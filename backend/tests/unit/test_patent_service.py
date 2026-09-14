@@ -9,10 +9,11 @@ agregando los casos que faltan para cumplir la rúbrica:
 No usa FastAPI ni HTTP — prueba PatentService directamente.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
+from app.errors import ExternalServiceTimeoutError
 from app.services.patent_service import ALL_COLUMNS, SUMMARY_COLUMNS, PatentService
 
 # Importar datos de muestra desde conftest (disponibles automáticamente)
@@ -148,15 +149,38 @@ class TestGetById:
 
         assert result is None
 
-    def test_get_by_id_propagates_timeout(self, mock_supabase):
+    def test_get_by_id_retries_and_translates_timeout(self, mock_supabase):
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
              .maybe_single.return_value
              .execute.side_effect) = TimeoutError("Supabase timeout")
+        sleep = MagicMock()
 
-        with pytest.raises(TimeoutError, match="Supabase timeout"):
-            PatentService(mock_supabase).get_by_id(1)
+        with pytest.raises(ExternalServiceTimeoutError) as exc_info:
+            PatentService(mock_supabase, sleep=sleep).get_by_id(1)
+
+        assert exc_info.value.status_code == 504
+        assert exc_info.value.code == "EXTERNAL_SERVICE_TIMEOUT"
+        assert sleep.call_args_list == [call(0.2)]
+
+    def test_get_by_id_recovers_after_transient_connection_error(self, mock_supabase):
+        execute = (mock_supabase.table.return_value
+                   .select.return_value
+                   .eq.return_value
+                   .maybe_single.return_value
+                   .execute)
+        execute.side_effect = [
+            ConnectionError("temporary"),
+            MagicMock(data={"id": 1}),
+        ]
+        sleep = MagicMock()
+
+        result = PatentService(mock_supabase, sleep=sleep).get_by_id(1)
+
+        assert result == {"id": 1}
+        assert execute.call_count == 2
+        sleep.assert_called_once_with(0.2)
 
     def test_get_by_id_filtra_por_el_id_correcto(self, mock_supabase):
         """La query usa .eq('id', patent_id) con el id exacto recibido."""

@@ -21,12 +21,19 @@ Para otra dirección de backend, cree `frontend/.env.local`:
 
 ```dotenv
 NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_TIMEOUT_MS=15000
+NEXT_PUBLIC_LONG_API_TIMEOUT_MS=60000
 ```
 
 Esta variable es pública y debe contener únicamente la URL base de la API, sin
 barra final. Las credenciales de Supabase y Gemini se configuran en el backend.
 Reinicie el servidor de desarrollo después de modificarla; en producción,
 configúrela antes del build y vuelva a compilar si cambia.
+
+Los dos timeouts son presupuestos del navegador/servidor Next.js: el primero se
+usa para lecturas normales y el segundo para búsqueda semántica, chat,
+clasificación y similares. Chat y clasificación cancelan la solicitud pendiente
+al cerrar o abandonar la vista; el clasificador también ofrece cancelación manual.
 
 El servidor Next.js consulta el catálogo y el navegador consulta el chat y el
 clasificador. Ambos deben poder acceder a la URL configurada. Para usar otra

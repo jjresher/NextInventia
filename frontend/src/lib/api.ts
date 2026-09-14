@@ -12,6 +12,19 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const CATALOG_REVALIDATE_SECONDS = 60;
 const PATENT_REVALIDATE_SECONDS = 300;
+const API_TIMEOUT_MS = positiveMilliseconds(
+  process.env.NEXT_PUBLIC_API_TIMEOUT_MS,
+  15_000
+);
+const LONG_API_TIMEOUT_MS = positiveMilliseconds(
+  process.env.NEXT_PUBLIC_LONG_API_TIMEOUT_MS,
+  60_000
+);
+
+interface RequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
 
 export class ApiResponseError extends Error {
   constructor(public readonly status: number) {
@@ -24,6 +37,44 @@ export class ApiContractError extends Error {
   constructor() {
     super("La API devolvió una respuesta incompatible.");
     this.name = "ApiContractError";
+  }
+}
+
+export class ApiTimeoutError extends Error {
+  constructor() {
+    super("La solicitud tardó demasiado. Intenta nuevamente.");
+    this.name = "ApiTimeoutError";
+  }
+}
+
+export class ApiCancelledError extends Error {
+  constructor() {
+    super("La solicitud fue cancelada.");
+    this.name = "ApiCancelledError";
+  }
+}
+
+function positiveMilliseconds(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function apiFetch(
+  input: string,
+  init: RequestInit,
+  options: RequestOptions,
+  defaultTimeoutMs: number
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? defaultTimeoutMs);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
+  try {
+    return await fetch(input, { ...init, signal });
+  } catch (error) {
+    if (timeoutSignal.aborted) throw new ApiTimeoutError();
+    if (options.signal?.aborted) throw new ApiCancelledError();
+    throw error;
   }
 }
 
@@ -55,7 +106,8 @@ async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promi
 export async function fetchPatents(
   page = 1,
   pageSize = 20,
-  query?: string
+  query?: string,
+  options: RequestOptions = {}
 ): Promise<PaginatedResponse> {
   const params = new URLSearchParams({
     page: String(page),
@@ -63,17 +115,26 @@ export async function fetchPatents(
   });
   if (query) params.set("q", query);
 
-  const res = await fetch(`${API_URL}/patentes/?${params}`, {
-    next: { revalidate: CATALOG_REVALIDATE_SECONDS },
-  });
+  const res = await apiFetch(
+    `${API_URL}/patentes/?${params}`,
+    { next: { revalidate: CATALOG_REVALIDATE_SECONDS } },
+    options,
+    API_TIMEOUT_MS
+  );
   if (!res.ok) throw new Error(`Error ${res.status}`);
   return parseResponse(res, paginatedResponseSchema);
 }
 
-export async function fetchPatentById(id: number): Promise<Patent> {
-  const res = await fetch(`${API_URL}/patentes/${id}`, {
-    next: { revalidate: PATENT_REVALIDATE_SECONDS },
-  });
+export async function fetchPatentById(
+  id: number,
+  options: RequestOptions = {}
+): Promise<Patent> {
+  const res = await apiFetch(
+    `${API_URL}/patentes/${id}`,
+    { next: { revalidate: PATENT_REVALIDATE_SECONDS } },
+    options,
+    API_TIMEOUT_MS
+  );
   if (!res.ok) throw new ApiResponseError(res.status);
   return parseResponse(res, patentSchema);
 }
@@ -88,14 +149,20 @@ export async function fetchPatentById(id: number): Promise<Patent> {
  */
 export async function searchSemantic(
   query: string,
-  topK = 20
+  topK = 20,
+  options: RequestOptions = {}
 ): Promise<SemanticSearchResponse> {
-  const res = await fetch(`${API_URL}/patentes/search/semantic`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK }),
-    cache: "no-store",
-  });
+  const res = await apiFetch(
+    `${API_URL}/patentes/search/semantic`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: topK }),
+      cache: "no-store",
+    },
+    options,
+    LONG_API_TIMEOUT_MS
+  );
   if (!res.ok) throw new Error(`Error ${res.status}`);
   return parseResponse(res, semanticSearchResponseSchema);
 }
@@ -106,11 +173,14 @@ export async function searchSemantic(
  */
 export async function fetchSimilarPatents(
   id: number,
-  topK = 8
+  topK = 8,
+  options: RequestOptions = {}
 ): Promise<SimilarPatentsResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_URL}/patentes/${id}/similares?top_k=${topK}`,
-    { next: { revalidate: PATENT_REVALIDATE_SECONDS } }
+    { next: { revalidate: PATENT_REVALIDATE_SECONDS } },
+    options,
+    LONG_API_TIMEOUT_MS
   );
   if (!res.ok) throw new Error(`Error ${res.status}`);
   return parseResponse(res, similarPatentsResponseSchema);
@@ -118,14 +188,20 @@ export async function fetchSimilarPatents(
 
 export async function recommendCpcCodes(
   description: string,
-  topK = 8
+  topK = 8,
+  options: RequestOptions = {}
 ): Promise<CpcClassificationResponse> {
-  const res = await fetch(`${API_URL}/clasificacion/cpc/recommend`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description, top_k: topK }),
-    cache: "no-store",
-  });
+  const res = await apiFetch(
+    `${API_URL}/clasificacion/cpc/recommend`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description, top_k: topK }),
+      cache: "no-store",
+    },
+    options,
+    LONG_API_TIMEOUT_MS
+  );
 
   if (!res.ok) {
     const payload = await res.json().catch(() => null);
@@ -141,13 +217,19 @@ export async function recommendCpcCodes(
 export async function sendChat(
   message: string,
   history: ChatMessage[],
-  patentIds: number[]
+  patentIds: number[],
+  options: RequestOptions = {}
 ): Promise<string> {
-  const res = await fetch(`${API_URL}/chat/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, history, patent_ids: patentIds }),
-  });
+  const res = await apiFetch(
+    `${API_URL}/chat/`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history, patent_ids: patentIds }),
+    },
+    options,
+    LONG_API_TIMEOUT_MS
+  );
   if (!res.ok) {
     const payload: unknown = await res.json().catch(() => null);
     const detail =

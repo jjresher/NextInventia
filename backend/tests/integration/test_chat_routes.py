@@ -6,6 +6,7 @@ from google.genai.errors import ClientError
 
 from app.dependencies import get_gemini_client
 from app.main import app
+from app.services.gemini_client import GeminiTimeoutError
 
 
 def use_fake_gemini(fake_client):
@@ -219,6 +220,18 @@ def test_chat_returns_502_on_real_client_error(client, monkeypatch):
 
     assert response.status_code == 502
     assert response.json()["code"] == "CHAT_PROVIDER_UNAVAILABLE"
+
+
+def test_chat_returns_504_on_provider_timeout(client):
+    fake_client = MagicMock()
+    fake_client.generate.side_effect = GeminiTimeoutError("slow")
+    use_fake_gemini(fake_client)
+
+    response = client.post("/chat/", json={"message": "Hola"})
+
+    assert response.status_code == 504
+    assert response.json()["code"] == "CHAT_PROVIDER_TIMEOUT"
+    assert response.json()["correlation_id"] == response.headers["x-correlation-id"]
 
 
 def test_chat_returns_safe_500_with_correlatable_redacted_log(

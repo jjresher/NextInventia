@@ -25,7 +25,7 @@ from app.services.cpc_catalog import (
     load_cpc_catalog,
 )
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME, encode_query
-from app.services.gemini_client import GeminiQuotaExhaustedError
+from app.services.gemini_client import GeminiQuotaExhaustedError, GeminiTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,7 @@ class ClassificationService:
         except (
             APIError,
             GeminiQuotaExhaustedError,
+            GeminiTimeoutError,
             json.JSONDecodeError,
             GeminiResponseError,
         ) as exc:

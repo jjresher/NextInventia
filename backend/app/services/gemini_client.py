@@ -18,13 +18,18 @@ from collections import deque
 from dataclasses import dataclass
 from threading import Lock
 
+import requests
 from google import genai
 from google.genai.errors import ClientError
-from google.genai.types import ContentListUnion
+from google.genai.types import ContentListUnion, HttpOptions
 
 
 class GeminiQuotaExhaustedError(RuntimeError):
     """All configured Gemini models are locally or remotely rate limited."""
+
+
+class GeminiTimeoutError(TimeoutError):
+    """Gemini exceeded its configured network timeout."""
 
 # ---------------------------------------------------------------------------
 # Configuración de límites reales por modelo (free tier)
@@ -106,8 +111,16 @@ class _ModelRateLimiter:
 # ---------------------------------------------------------------------------
 
 class GeminiFallbackClient:
-    def __init__(self, api_key: str, cascade: list[ModelLimits] | None = None):
-        self._client = genai.Client(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        cascade: list[ModelLimits] | None = None,
+        timeout_seconds: float = 45,
+    ):
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=HttpOptions(timeout=int(timeout_seconds * 1000)),
+        )
         self._cascade = cascade or MODEL_CASCADE
         self._limiters = {m.name: _ModelRateLimiter(m) for m in self._cascade}
 
@@ -149,6 +162,8 @@ class GeminiFallbackClient:
                 )
                 return response.text
 
+            except requests.Timeout as exc:
+                raise GeminiTimeoutError("Gemini request timed out") from exc
             except ClientError as e:
                 if getattr(e, "code", None) == 429:
                     # La cuota real de Google ya se agotó para este modelo

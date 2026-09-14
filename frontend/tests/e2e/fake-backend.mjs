@@ -46,7 +46,7 @@ createServer((request, response) => {
     request.url === "/clasificacion/cpc/recommend" &&
     request.method === "POST"
   ) {
-    return send(response, {
+    const classificationResponse = {
       recommended_codes: [
         {
           code: "F02D 41/00",
@@ -62,7 +62,14 @@ createServer((request, response) => {
       google_patents_query: "CPC=F02D41/00",
       notes: "Respuesta falsa para E2E.",
       local_fallback: false,
+    };
+    let body = "";
+    request.on("data", (chunk) => { body += chunk; });
+    request.on("end", () => {
+      const delay = body.includes("solicitud lenta") ? 10_000 : 0;
+      setTimeout(() => send(response, classificationResponse), delay);
     });
+    return;
   }
   return send(response, { detail: "Not found" }, 404);
 }).listen(8000, "127.0.0.1");

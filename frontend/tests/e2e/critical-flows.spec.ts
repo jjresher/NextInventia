@@ -52,3 +52,14 @@ test("clasifica una descripción mediante la API falsa", async ({ page }) => {
 
   await expect(page.getByText("F02D 41/00")).toBeVisible();
 });
+
+test("permite cancelar una clasificación pendiente", async ({ page }) => {
+  await page.goto("/clasificar");
+  await page.getByPlaceholder(/sistema electrónico/).fill(
+    "solicitud lenta para probar cancelación"
+  );
+  await page.getByRole("button", { name: "Analizar clasificación CPC" }).click();
+  await page.getByRole("button", { name: "Cancelar análisis" }).click();
+
+  await expect(page.getByText("El análisis fue cancelado.")).toBeVisible();
+});

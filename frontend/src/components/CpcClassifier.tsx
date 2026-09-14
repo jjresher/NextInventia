@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowUpRight,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import {
+  ApiCancelledError,
   CpcClassificationResponse,
   recommendCpcCodes,
 } from "@/lib/api";
@@ -37,6 +38,19 @@ export default function CpcClassifier() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const activeRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => activeRequest.current?.abort();
+  }, []);
+
+  const cancelAnalysis = () => {
+    activeRequest.current?.abort();
+    activeRequest.current = null;
+    setLoading(false);
+    setResult(null);
+    setError("El análisis fue cancelado.");
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -46,17 +60,29 @@ export default function CpcClassifier() {
     setLoading(true);
     setError("");
     setCopied(false);
+    activeRequest.current?.abort();
+    const request = new AbortController();
+    activeRequest.current = request;
     try {
-      setResult(await recommendCpcCodes(cleanDescription));
+      setResult(
+        await recommendCpcCodes(cleanDescription, 8, {
+          signal: request.signal,
+        })
+      );
     } catch (requestError) {
       setResult(null);
       setError(
-        requestError instanceof Error
+        requestError instanceof ApiCancelledError
+          ? "El análisis fue cancelado."
+          : requestError instanceof Error
           ? requestError.message
           : "Ocurrió un error durante el análisis."
       );
     } finally {
-      setLoading(false);
+      if (activeRequest.current === request) {
+        activeRequest.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -132,20 +158,21 @@ export default function CpcClassifier() {
 
           <button
             type="submit"
-            disabled={!description.trim() || loading}
+            hidden={loading}
+            disabled={!description.trim()}
             className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-3 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
-            {loading ? (
-              <>
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-                Recuperando candidatos
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4" />
-                Analizar clasificación CPC
-              </>
-            )}
+            <Sparkles className="h-4 w-4" />
+            Analizar clasificación CPC
+          </button>
+          <button
+            type="button"
+            hidden={!loading}
+            onClick={cancelAnalysis}
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-3 focus:ring-indigo-200"
+          >
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            Cancelar análisis
           </button>
         </div>
       </form>

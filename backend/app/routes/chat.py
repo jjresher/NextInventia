@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 
 from app.dependencies import get_gemini_client, get_patent_service
 from app.errors import ApiError
-from app.services.gemini_client import GeminiFallbackClient
+from app.services.gemini_client import GeminiFallbackClient, GeminiTimeoutError
 from app.services.patent_service import PatentService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -170,6 +170,12 @@ def chat(
 
     try:
         reply = client.generate(contents, config=config)
+    except GeminiTimeoutError as exc:
+        raise ApiError(
+            504,
+            "CHAT_PROVIDER_TIMEOUT",
+            "El asistente tardó demasiado en responder. Intenta nuevamente.",
+        ) from exc
     except (RuntimeError, ClientError) as exc:
         # RuntimeError: la cascada agoto la cuota de todos los modelos.
         # ClientError: error real de la API (no de cuota, GeminiFallbackClient

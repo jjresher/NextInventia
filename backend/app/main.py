@@ -6,13 +6,14 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
 
 from app.config import Settings
 from app.dependencies import get_classification_service, get_supabase
 from app.errors import (
     ApiError,
     CorrelationIdMiddleware,
+    RequestTimeoutMiddleware,
     api_error_handler,
     unexpected_error_handler,
 )
@@ -61,8 +62,21 @@ def create_app(
     classification_factory: ClassificationFactory | None = None,
 ) -> FastAPI:
     settings = app_settings or Settings()
-    make_supabase = supabase_factory or create_client
-    make_gemini = gemini_factory or GeminiFallbackClient
+    make_supabase = supabase_factory or (
+        lambda url, key: create_client(
+            url,
+            key,
+            options=ClientOptions(
+                postgrest_client_timeout=settings.supabase_timeout_seconds,
+            ),
+        )
+    )
+    make_gemini = gemini_factory or (
+        lambda key: GeminiFallbackClient(
+            key,
+            timeout_seconds=settings.gemini_timeout_seconds,
+        )
+    )
     make_classification = classification_factory or (
         lambda gemini: ClassificationService(gemini_client=gemini)
     )
@@ -89,6 +103,10 @@ def create_app(
     application.add_exception_handler(ApiError, api_error_handler)
     application.add_exception_handler(Exception, unexpected_error_handler)
     application.add_middleware(CorrelationIdMiddleware)
+    application.add_middleware(
+        RequestTimeoutMiddleware,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.frontend_origin],
