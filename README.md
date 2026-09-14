@@ -161,6 +161,13 @@ APP_ENVIRONMENT=development
 
 # Habilítelo solo para desarrollo desde otros equipos de la red privada.
 ALLOW_LOCAL_NETWORK_ORIGINS=false
+
+# Presupuestos de tiempo y reintentos de lecturas externas.
+SUPABASE_TIMEOUT_SECONDS=10
+GEMINI_TIMEOUT_SECONDS=45
+REQUEST_TIMEOUT_SECONDS=60
+EXTERNAL_RETRY_ATTEMPTS=2
+EXTERNAL_RETRY_BACKOFF_SECONDS=0.2
 ```
 
 Notas:
@@ -406,6 +413,11 @@ Los errores controlados de chat y clasificación devuelven un `detail` estable,
 un `code` legible por máquina y un `correlation_id`. Ese mismo identificador se
 expone en la cabecera `X-Correlation-ID` de todas las respuestas para poder
 relacionar un fallo público con el log interno sin publicar datos sensibles.
+
+Las lecturas de Supabase se reintentan únicamente ante fallos transitorios, con
+backoff y un máximo configurable. Las solicitudes a Gemini no se reintentan tras
+un fallo ambiguo. Cada proveedor tiene su timeout y la API aplica además un
+presupuesto total por request; los timeouts controlados devuelven HTTP 504.
 
 `GET /` y `GET /health/live` son comprobaciones baratas de liveness y no consultan
 dependencias. `GET /health/ready` comprueba Supabase y el índice CPC, informa el

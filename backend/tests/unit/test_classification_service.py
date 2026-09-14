@@ -11,7 +11,7 @@ from app.services.classification_service import (
 )
 from app.services.cpc_catalog import file_sha256
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME
-from app.services.gemini_client import GeminiQuotaExhaustedError
+from app.services.gemini_client import GeminiQuotaExhaustedError, GeminiTimeoutError
 
 
 def vector(value: float, axis: int = 0) -> np.ndarray:
@@ -215,6 +215,21 @@ def test_fallback_when_gemini_quota_is_exhausted(local_index, monkeypatch, caplo
     assert result.local_fallback is True
     assert "classification_fallback" in caplog.text
     assert "control electronico" not in caplog.text
+
+
+def test_fallback_when_gemini_times_out(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.side_effect = GeminiTimeoutError("slow")
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    result = service.recommend("control electronico", top_k=2)
+
+    assert len(result.recommended_codes) == 2
+    assert result.local_fallback is True
 
 
 def test_fallback_when_gemini_returns_invalid_json(local_index, monkeypatch):

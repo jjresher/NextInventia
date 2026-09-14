@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -123,3 +124,19 @@ def test_production_never_enables_private_network_cors_regex():
 
     assert response.status_code == 400
     assert "access-control-allow-origin" not in response.headers
+
+
+def test_request_budget_returns_correlated_timeout():
+    application = create_app(make_settings(request_timeout_seconds=0.01))
+
+    @application.get("/slow-test-endpoint")
+    async def slow_endpoint():
+        await asyncio.sleep(1)
+        return {"status": "unexpected"}
+
+    with TestClient(application) as client:
+        response = client.get("/slow-test-endpoint")
+
+    assert response.status_code == 504
+    assert response.json()["code"] == "REQUEST_TIMEOUT"
+    assert response.json()["correlation_id"] == response.headers["x-correlation-id"]

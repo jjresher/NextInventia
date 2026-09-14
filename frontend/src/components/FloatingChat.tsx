@@ -12,6 +12,7 @@ import {
   removeLegacyChatContext,
 } from "@/lib/chatContext.mjs";
 import {
+  ApiCancelledError,
   fetchPatentById,
   sendChat,
   type ChatMessage,
@@ -85,14 +86,17 @@ export default function FloatingChat() {
   const [loading, setLoading] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const activeChatRequest = useRef<AbortController | null>(null);
 
   // Recarga contexto cuando cambia la ruta (incluso con chat abierto)
   useEffect(() => {
+    const contextRequest = new AbortController();
     const patentMatch = pathname.match(/^\/patentes\/(\d+)$/);
     const query = searchParams.get("q");
 
     setPatentIds([]);
     setMessages([]);
+    setLoadingContext(false);
 
     if (!open) return;
 
@@ -100,13 +104,21 @@ export default function FloatingChat() {
 
     if (patentMatch) {
       setLoadingContext(true);
-      fetchPatentById(Number(patentMatch[1]))
+      fetchPatentById(Number(patentMatch[1]), {
+        signal: contextRequest.signal,
+      })
         .then((patent) => {
           setPatentIds([patent.id]);
           setMessages([welcomeMessage(1, patent.pn ?? "", patent)]);
         })
-        .catch(() => setMessages([welcomeMessage(0, "")]))
-        .finally(() => setLoadingContext(false));
+        .catch((error) => {
+          if (!(error instanceof ApiCancelledError)) {
+            setMessages([welcomeMessage(0, "")]);
+          }
+        })
+        .finally(() => {
+          if (!contextRequest.signal.aborted) setLoadingContext(false);
+        });
     } else if (pathname === "/" && query) {
       const cached = readChatContext(sessionStorage, query);
       if (cached) {
@@ -118,7 +130,12 @@ export default function FloatingChat() {
     } else {
       setMessages([welcomeMessage(0, "")]);
     }
+    return () => contextRequest.abort();
   }, [pathname, searchParams, open]);
+
+  useEffect(() => {
+    return () => activeChatRequest.current?.abort();
+  }, [pathname, open]);
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -133,15 +150,20 @@ export default function FloatingChat() {
     setMessages(newHistory);
     setInput("");
     setLoading(true);
+    activeChatRequest.current?.abort();
+    const request = new AbortController();
+    activeChatRequest.current = request;
 
     try {
       const reply = await sendChat(
         text,
         buildChatHistory(messages.slice(1)),
-        patentIds
+        patentIds,
+        { signal: request.signal }
       );
       setMessages([...newHistory, { role: "model", content: reply }]);
     } catch (err) {
+      if (err instanceof ApiCancelledError) return;
       const msg = err instanceof Error ? err.message : "Error desconocido";
       console.error("[FloatingChat]", msg);
       setMessages([
@@ -149,7 +171,10 @@ export default function FloatingChat() {
         { role: "model", content: `⚠️ ${msg}` },
       ]);
     } finally {
-      setLoading(false);
+      if (activeChatRequest.current === request) {
+        activeChatRequest.current = null;
+        setLoading(false);
+      }
     }
   }
 

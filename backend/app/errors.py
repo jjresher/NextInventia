@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
@@ -5,6 +6,8 @@ from uuid import uuid4
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 from starlette.types import Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
@@ -20,6 +23,45 @@ class ApiError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+
+
+class ExternalServiceTimeoutError(ApiError):
+    def __init__(self, provider: str) -> None:
+        super().__init__(
+            504,
+            "EXTERNAL_SERVICE_TIMEOUT",
+            f"{provider} tardó demasiado en responder. Intenta nuevamente.",
+        )
+
+
+class RequestTimeoutMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, timeout_seconds: float) -> None:
+        super().__init__(app)
+        self.timeout_seconds = timeout_seconds
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        try:
+            return await asyncio.wait_for(
+                call_next(request),
+                timeout=self.timeout_seconds,
+            )
+        except TimeoutError:
+            correlation_id = _correlation_id(request)
+            logger.warning(
+                "Request timeout correlation_id=%s timeout_seconds=%s",
+                correlation_id,
+                self.timeout_seconds,
+            )
+            return _response(
+                504,
+                "REQUEST_TIMEOUT",
+                "La solicitud excedió el tiempo máximo. Intenta nuevamente.",
+                correlation_id,
+            )
 
 
 class CorrelationIdMiddleware:

@@ -10,8 +10,16 @@ def get_supabase(request: Request) -> Client:
     return request.app.state.supabase
 
 
-def get_patent_service(client: Client = Depends(get_supabase)) -> PatentService:
-    return PatentService(client)
+def get_patent_service(
+    request: Request,
+    client: Client = Depends(get_supabase),
+) -> PatentService:
+    settings = request.app.state.settings
+    return PatentService(
+        client,
+        retry_attempts=settings.external_retry_attempts,
+        retry_backoff_seconds=settings.external_retry_backoff_seconds,
+    )
 
 
 def get_gemini_client(request: Request) -> GeminiFallbackClient:
