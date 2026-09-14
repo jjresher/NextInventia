@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import traceback
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
@@ -9,6 +10,8 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 from starlette.types import Message, Receive, Scope, Send
+
+from app.observability import MetricsRegistry, log_event
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +54,13 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
             )
         except TimeoutError:
             correlation_id = _correlation_id(request)
-            logger.warning(
-                "Request timeout correlation_id=%s timeout_seconds=%s",
-                correlation_id,
-                self.timeout_seconds,
+            log_event(
+                logger,
+                logging.WARNING,
+                "request_timeout",
+                correlation_id=correlation_id,
+                duration_ms=round(self.timeout_seconds * 1000, 2),
+                status=504,
             )
             return _response(
                 504,
@@ -65,8 +71,13 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
 
 
 class CorrelationIdMiddleware:
-    def __init__(self, app: Callable[..., Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        app: Callable[..., Awaitable[None]],
+        metrics: MetricsRegistry,
+    ) -> None:
         self.app = app
+        self.metrics = metrics
 
     async def __call__(
         self,
@@ -80,9 +91,14 @@ class CorrelationIdMiddleware:
 
         correlation_id = str(uuid4())
         scope.setdefault("state", {})["correlation_id"] = correlation_id
+        started_at = time.perf_counter()
+        status_code = 500
+        self.metrics.add_gauge("http_requests_in_flight", 1)
 
         async def send_with_correlation_id(message: Message) -> None:
+            nonlocal status_code
             if message["type"] == "http.response.start":
+                status_code = message["status"]
                 headers = list(message.get("headers", []))
                 header_name = CORRELATION_ID_HEADER.lower().encode("ascii")
                 if not any(name == header_name for name, _ in headers):
@@ -95,7 +111,36 @@ class CorrelationIdMiddleware:
                 message["headers"] = headers
             await send(message)
 
-        await self.app(scope, receive, send_with_correlation_id)
+        try:
+            await self.app(scope, receive, send_with_correlation_id)
+        finally:
+            duration = time.perf_counter() - started_at
+            route = getattr(scope.get("route"), "path", "unmatched")
+            method = scope.get("method", "UNKNOWN")
+            status = str(status_code)
+            self.metrics.add_gauge("http_requests_in_flight", -1)
+            self.metrics.increment(
+                "http_requests_total",
+                method=method,
+                route=route,
+                status=status,
+            )
+            self.metrics.observe(
+                "http_request_duration_seconds",
+                duration,
+                method=method,
+                route=route,
+            )
+            log_event(
+                logger,
+                logging.INFO,
+                "request_completed",
+                correlation_id=correlation_id,
+                duration_ms=round(duration * 1000, 2),
+                method=method,
+                route=route,
+                status=status,
+            )
 
 
 def _correlation_id(request: Request) -> str:
@@ -116,11 +161,13 @@ def _response(status_code: int, code: str, message: str, correlation_id: str):
 
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     correlation_id = _correlation_id(request)
-    logger.warning(
-        "Public API error correlation_id=%s code=%s status=%s",
-        correlation_id,
-        exc.code,
-        exc.status_code,
+    log_event(
+        logger,
+        logging.WARNING,
+        "api_error",
+        correlation_id=correlation_id,
+        error_type=exc.code,
+        status=exc.status_code,
     )
     return _response(exc.status_code, exc.code, exc.message, correlation_id)
 
@@ -128,11 +175,14 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
 async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
     correlation_id = _correlation_id(request)
     stack_trace = "".join(traceback.format_tb(exc.__traceback__))
-    logger.error(
-        "Unhandled API error correlation_id=%s error_type=%s stack_trace=%s",
-        correlation_id,
-        type(exc).__name__,
-        stack_trace,
+    log_event(
+        logger,
+        logging.ERROR,
+        "unhandled_error",
+        correlation_id=correlation_id,
+        error_type=type(exc).__name__,
+        stack_trace=stack_trace,
+        status=500,
     )
     return _response(
         500,

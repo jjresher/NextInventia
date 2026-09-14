@@ -9,6 +9,7 @@ agregando los casos que faltan para cumplir la rúbrica:
 Usa el fixture `client` de conftest.py (TestClient con get_supabase mockeado).
 """
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -40,6 +41,17 @@ class TestHealthCheck:
 # ===========================================================================
 
 class TestListPatentes:
+
+    def test_request_log_uses_route_template_and_excludes_query(self, client, caplog):
+        sensitive_query = "prompt-secreto-claim-privado"
+
+        with caplog.at_level(logging.INFO, logger="app.errors"):
+            response = client.get("/patentes/", params={"q": sensitive_query})
+
+        assert response.status_code == 200
+        assert '"event": "request_completed"' in caplog.text
+        assert '"route": "/patentes/"' in caplog.text
+        assert sensitive_query not in caplog.text
 
     # --- Test existente en tests/db-patents (se conserva sin modificar) ---
     def test_list_patents_happy_path(self, client, mock_supabase):

@@ -17,6 +17,8 @@ from app.errors import (
     api_error_handler,
     unexpected_error_handler,
 )
+from app.models.observability import MetricsSnapshot, ReadinessResponse
+from app.observability import MetricsRegistry
 from app.routes.chat import router as chat_router
 from app.routes.classification import router as classification_router
 from app.routes.patents import router as patents_router
@@ -62,6 +64,7 @@ def create_app(
     classification_factory: ClassificationFactory | None = None,
 ) -> FastAPI:
     settings = app_settings or Settings()
+    metrics = MetricsRegistry()
     make_supabase = supabase_factory or (
         lambda url, key: create_client(
             url,
@@ -75,10 +78,11 @@ def create_app(
         lambda key: GeminiFallbackClient(
             key,
             timeout_seconds=settings.gemini_timeout_seconds,
+            metrics=metrics,
         )
     )
     make_classification = classification_factory or (
-        lambda gemini: ClassificationService(gemini_client=gemini)
+        lambda gemini: ClassificationService(gemini_client=gemini, metrics=metrics)
     )
 
     @asynccontextmanager
@@ -99,10 +103,11 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.settings = settings
+    application.state.metrics = metrics
 
     application.add_exception_handler(ApiError, api_error_handler)
     application.add_exception_handler(Exception, unexpected_error_handler)
-    application.add_middleware(CorrelationIdMiddleware)
+    application.add_middleware(CorrelationIdMiddleware, metrics=metrics)
     application.add_middleware(
         RequestTimeoutMiddleware,
         timeout_seconds=settings.request_timeout_seconds,
@@ -130,7 +135,7 @@ def create_app(
     def liveness() -> dict[str, str]:
         return {"status": "ok", "service": "patentologos-api"}
 
-    @application.get("/health/ready")
+    @application.get("/health/ready", response_model=ReadinessResponse)
     def readiness(
         supabase: Client = Depends(get_supabase),
         classification: ClassificationService = Depends(get_classification_service),
@@ -155,6 +160,10 @@ def create_app(
             status_code=200 if ready else 503,
             content={"status": "ready" if ready else "not_ready", "checks": checks},
         )
+
+    @application.get("/metrics", response_model=MetricsSnapshot)
+    def metrics_snapshot() -> MetricsSnapshot:
+        return MetricsSnapshot.model_validate(metrics.snapshot())
 
     return application
 

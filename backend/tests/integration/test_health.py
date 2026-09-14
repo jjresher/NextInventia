@@ -140,3 +140,13 @@ def test_request_budget_returns_correlated_timeout():
     assert response.status_code == 504
     assert response.json()["code"] == "REQUEST_TIMEOUT"
     assert response.json()["correlation_id"] == response.headers["x-correlation-id"]
+
+
+def test_metrics_endpoint_contains_request_signals(client):
+    client.get("/health/live")
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    names = [item["name"] for item in response.json()["counters"]]
+    assert "http_requests_total" in names

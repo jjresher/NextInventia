@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, call
 import pytest
 
 from app.errors import ExternalServiceTimeoutError
+from app.observability import MetricsRegistry
 from app.services.patent_service import ALL_COLUMNS, SUMMARY_COLUMNS, PatentService
 
 # Importar datos de muestra desde conftest (disponibles automáticamente)
@@ -122,6 +123,24 @@ class TestGetAll:
 # ===========================================================================
 
 class TestGetById:
+
+    def test_get_by_id_records_bounded_supabase_metrics(self, mock_supabase):
+        metrics = MetricsRegistry()
+
+        PatentService(mock_supabase, metrics=metrics).get_by_id(1)
+
+        snapshot = metrics.snapshot()
+        counter = next(
+            item for item in snapshot["counters"]
+            if item["name"] == "dependency_requests_total"
+        )
+        assert counter["labels"] == {
+            "dependency": "supabase",
+            "operation": "detail",
+            "status": "ok",
+        }
+        assert snapshot["gauges"][0]["value"] == 0
+        assert snapshot["durations"][0]["value"]["count"] == 1
 
     def test_get_by_id_retorna_ficha_cuando_id_existe(self, mock_supabase):
         """Happy path: id existente → devuelve dict con los campos de la patente."""
