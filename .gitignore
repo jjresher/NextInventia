@@ -43,6 +43,9 @@ Desktop.ini
 .pytest_cache/
 htmlcov/
 .coverage
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 
 # Datos de exports/merges (archivos de trabajo, no versionar)
 backend/exel/*.xlsx

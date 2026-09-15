@@ -1,0 +1,8 @@
+# Dependencias exclusivas de importación y trabajos offline en backend/exel/.
+# requirements-offline.lock fija sus dependencias transitivas.
+-r requirements.txt
+
+pandas>=2.2,<4
+openpyxl>=3.1,<4
+scikit-learn>=1.6,<2
+tqdm>=4.67,<5

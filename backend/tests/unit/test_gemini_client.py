@@ -1,9 +1,15 @@
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from google.genai.errors import ClientError
 
-from app.services.gemini_client import GeminiFallbackClient, ModelLimits
+from app.observability import MetricsRegistry
+from app.services.gemini_client import (
+    GeminiFallbackClient,
+    GeminiTimeoutError,
+    ModelLimits,
+)
 
 
 def _client_error(code: int) -> ClientError:
@@ -23,11 +29,20 @@ CASCADE = [
 @pytest.fixture
 def fake_genai_client(monkeypatch):
     fake = MagicMock()
+    factory = MagicMock(return_value=fake)
     monkeypatch.setattr(
         "app.services.gemini_client.genai.Client",
-        lambda api_key: fake,
+        factory,
     )
+    fake.client_factory = factory
     return fake
+
+
+def test_configures_provider_timeout_in_milliseconds(fake_genai_client):
+    GeminiFallbackClient(api_key="fake", timeout_seconds=12.5)
+
+    options = fake_genai_client.client_factory.call_args.kwargs["http_options"]
+    assert options.timeout == 12_500
 
 
 def test_uses_first_model_when_capacity_available(fake_genai_client):
@@ -54,6 +69,21 @@ def test_falls_back_to_next_model_on_real_429(fake_genai_client):
     assert fake_genai_client.models.generate_content.call_count == 2
 
 
+def test_fallback_and_rate_limit_emit_metrics(fake_genai_client):
+    fake_genai_client.models.generate_content.side_effect = [
+        _client_error(429),
+        MagicMock(text="from model-b"),
+    ]
+    metrics = MetricsRegistry()
+    client = GeminiFallbackClient(api_key="fake", cascade=CASCADE, metrics=metrics)
+
+    client.generate("prompt")
+
+    names = [item["name"] for item in metrics.snapshot()["counters"]]
+    assert "provider_rate_limits_total" in names
+    assert "provider_fallbacks_total" in names
+
+
 def test_non_quota_error_is_not_swallowed(fake_genai_client):
     fake_genai_client.models.generate_content.side_effect = _client_error(400)
     client = GeminiFallbackClient(api_key="fake", cascade=CASCADE)
@@ -62,6 +92,16 @@ def test_non_quota_error_is_not_swallowed(fake_genai_client):
         client.generate("prompt")
 
     assert exc_info.value.code == 400
+    assert fake_genai_client.models.generate_content.call_count == 1
+
+
+def test_timeout_is_translated_without_retrying_generation(fake_genai_client):
+    fake_genai_client.models.generate_content.side_effect = requests.Timeout("slow")
+    client = GeminiFallbackClient(api_key="fake", cascade=CASCADE)
+
+    with pytest.raises(GeminiTimeoutError):
+        client.generate("prompt")
+
     assert fake_genai_client.models.generate_content.call_count == 1
 
 

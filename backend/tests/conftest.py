@@ -3,18 +3,21 @@ Usa get_supabase como punto de inyección para que el mock sea lo más simple y 
 Supabase nunca hace llamadas reales: los tests corren sin .env ni red.
 """
 import os
+
 os.environ.setdefault("SUPABASE_URL", "http://fake-url-for-testing")
-os.environ.setdefault("SUPABASE_KEY", "fake-key-for-testing")
+os.environ.setdefault("SUPABASE_ANON_KEY", "fake-key-for-testing")
 os.environ.setdefault("FRONTEND_ORIGIN", "http://localhost:3000")
+os.environ.setdefault("APP_ENVIRONMENT", "test")
+os.environ.setdefault("ALLOW_LOCAL_NETWORK_ORIGINS", "true")
 os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-testing")
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 from fastapi.testclient import TestClient
-from app.main import app
+
 from app.dependencies import get_supabase
-
-
+from app.main import app
 
 # Datos de muestra reutilizables en todos los tests
 
@@ -60,9 +63,9 @@ def mock_supabase():
     ya configuradas por defecto. Cada test puede sobreescribir lo que necesite.
 
     Cadenas cubiertas:
-      get_all:   .table().select("id", count="exact").execute()             → count
-                 .table().select(cols).order().range().execute()             → data
-      get_by_id: .table().select().eq().single().execute()                  → single row
+      get_all:   .table().select(cols, count="exact").order().range()
+                 .execute()                                                   → data + count
+      get_by_id: .table().select().eq().maybe_single().execute()            → zero/one row
       search:    .table().select("id", count="exact").or_().execute()       → count
                  .table().select(cols).or_().order().range().execute()      → data
     """
@@ -70,15 +73,12 @@ def mock_supabase():
 
     # Respuestas por defecto
     count_resp = MagicMock(count=len(PATENT_LIST))
-    data_resp  = MagicMock(data=PATENT_LIST)
+    data_resp  = MagicMock(data=PATENT_LIST, count=len(PATENT_LIST))
     single_resp = MagicMock(data=PATENT_SAMPLE)
 
     table = mock.table.return_value
 
-    # --- get_all: count ---
-    table.select.return_value.execute.return_value = count_resp
-
-    # --- get_all: data ---
+    # --- get_all: data + count ---
     (table.select.return_value
           .order.return_value
           .range.return_value
@@ -87,7 +87,7 @@ def mock_supabase():
     # --- get_by_id ---
     (table.select.return_value
           .eq.return_value
-          .single.return_value
+          .maybe_single.return_value
           .execute.return_value) = single_resp
 
     # --- search: count ---

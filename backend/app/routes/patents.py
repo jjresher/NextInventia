@@ -17,7 +17,7 @@ router = APIRouter(prefix="/patentes", tags=["patentes"])
 def list_patents(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    q: str | None = Query(None, min_length=1),
+    q: str | None = Query(None, min_length=1, max_length=200, pattern=r".*\S.*"),
     service: PatentService = Depends(get_patent_service),
 ):
     if q:
@@ -33,7 +33,7 @@ def search_semantic(
     payload: SemanticSearchRequest,
     service: PatentService = Depends(get_patent_service),
 ):
-    """Búsqueda híbrida BM25 + Sentence-BERT con fusión RRF.
+    """Búsqueda híbrida PostgreSQL FTS + Sentence-BERT con fusión RRF.
 
     A diferencia de `GET /patentes/?q=`, este endpoint:
       * calcula el embedding de la query con Sentence-BERT,

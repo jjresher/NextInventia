@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { getVisiblePages } from "@/lib/pagination.mjs";
 
 interface Props {
   currentPage: number;
@@ -20,39 +21,40 @@ export default function Pagination({ currentPage, totalPages }: Props) {
     router.push(`/?${params}`);
   }
 
-  const pages: (number | "...")[] = [];
-  for (let i = 1; i <= totalPages; i++) {
-    if (
-      i === 1 ||
-      i === totalPages ||
-      (i >= currentPage - 2 && i <= currentPage + 2)
-    ) {
-      pages.push(i);
-    } else if (pages[pages.length - 1] !== "...") {
-      pages.push("...");
-    }
-  }
+  const pages = getVisiblePages(currentPage, totalPages);
 
   return (
-    <div className="flex items-center justify-center gap-1.5 mt-10">
+    <nav
+      aria-label="Paginación de resultados"
+      className="flex items-center justify-center gap-1.5 mt-10"
+    >
       <button
+        type="button"
+        aria-label="Ir a la página anterior"
         onClick={() => goToPage(currentPage - 1)}
         disabled={currentPage <= 1}
         className="flex items-center gap-1 px-3.5 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-white hover:shadow-sm hover:text-primary-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 border border-transparent hover:border-gray-200"
       >
-        <ChevronLeft className="w-4 h-4" />
+        <ChevronLeft aria-hidden="true" className="w-4 h-4" />
         Anterior
       </button>
 
       <div className="flex items-center gap-1">
         {pages.map((p, i) =>
           p === "..." ? (
-            <span key={`dots-${i}`} className="px-2 text-gray-300 select-none">
+            <span
+              key={`dots-${i}`}
+              aria-hidden="true"
+              className="px-2 text-gray-300 select-none"
+            >
               ···
             </span>
           ) : (
             <button
               key={p}
+              type="button"
+              aria-label={`Ir a la página ${p}`}
+              aria-current={p === currentPage ? "page" : undefined}
               onClick={() => goToPage(p)}
               className={`w-10 h-10 rounded-xl text-sm font-medium transition-all duration-200 ${
                 p === currentPage
@@ -67,13 +69,15 @@ export default function Pagination({ currentPage, totalPages }: Props) {
       </div>
 
       <button
+        type="button"
+        aria-label="Ir a la página siguiente"
         onClick={() => goToPage(currentPage + 1)}
         disabled={currentPage >= totalPages}
         className="flex items-center gap-1 px-3.5 py-2 rounded-xl text-sm font-medium text-gray-600 hover:bg-white hover:shadow-sm hover:text-primary-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 border border-transparent hover:border-gray-200"
       >
         Siguiente
-        <ChevronRight className="w-4 h-4" />
+        <ChevronRight aria-hidden="true" className="w-4 h-4" />
       </button>
-    </div>
+    </nav>
   );
 }

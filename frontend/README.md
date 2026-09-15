@@ -1,36 +1,112 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend de Patentólogos
 
-## Getting Started
+Interfaz en español para buscar patentes, consultar detalles, conversar sobre
+resultados y recomendar códigos CPC. Usa Next.js 16.3.4 (App Router), React
+19.2.3, TypeScript y Tailwind CSS 4.
 
-First, run the development server:
+## Ejecución local
 
-```bash
+Desde `frontend/`:
+
+```powershell
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abra <http://localhost:3000>. El backend FastAPI debe estar disponible en
+`http://localhost:8000`. Consulte el [README principal](../README.md) para
+configurar Supabase, Gemini y el índice CPC.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Para otra dirección de backend, cree `frontend/.env.local`:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_TIMEOUT_MS=15000
+NEXT_PUBLIC_LONG_API_TIMEOUT_MS=60000
+```
 
-## Learn More
+Esta variable es pública y debe contener únicamente la URL base de la API, sin
+barra final. Las credenciales de Supabase y Gemini se configuran en el backend.
+Reinicie el servidor de desarrollo después de modificarla; en producción,
+configúrela antes del build y vuelva a compilar si cambia.
 
-To learn more about Next.js, take a look at the following resources:
+Los dos timeouts son presupuestos del navegador/servidor Next.js: el primero se
+usa para lecturas normales y el segundo para búsqueda semántica, chat,
+clasificación y similares. Chat y clasificación cancelan la solicitud pendiente
+al cerrar o abandonar la vista; el clasificador también ofrece cancelación manual.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+El servidor Next.js consulta el catálogo y el navegador consulta el chat y el
+clasificador. Ambos deben poder acceder a la URL configurada. Para usar otra
+máquina de la red, sustituya `localhost` por la IP del backend y ejecute:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```powershell
+npm run dev -- --hostname 0.0.0.0 --port 3000
+```
 
-## Deploy on Vercel
+Configure también CORS y la escucha de red del backend según el README principal.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Headers de seguridad
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`next.config.ts` aplica a todas las rutas una CSP en modo report-only, protección
+contra framing y MIME sniffing, una política de referencias y una política de
+permisos que deshabilita cámara, geolocalización y micrófono. `connect-src` permite
+solo el propio frontend y el origen de `NEXT_PUBLIC_API_URL`; no admite comodines.
+
+La CSP permanece en report-only durante el MVP para observar incompatibilidades
+antes de bloquear recursos. Scripts y estilos inline siguen permitidos porque los
+usa el runtime de Next.js; deben retirarse de la política cuando se adopten nonces.
+HSTS se envía únicamente en builds de producción, donde el sitio debe publicarse
+exclusivamente mediante HTTPS. Desarrollo omite HSTS para no forzar HTTPS local.
+
+## Rutas y componentes
+
+| Ruta | Función |
+| --- | --- |
+| `/` | Catálogo paginado y búsqueda híbrida |
+| `/patentes/[id]` | Detalle y patentes similares |
+| `/clasificar` | Recomendaciones CPC y ecuación para Google Patents |
+| `/acerca` | Información del proyecto |
+
+- `src/lib/api.ts`: cliente HTTP con validación runtime de respuestas.
+- `src/lib/api.generated.ts`: tipos generados desde `backend/openapi.json`; no se
+  edita manualmente.
+- `src/components/FloatingChat.tsx`: chat contextual disponible desde el layout.
+- `src/components/SearchContextStore.tsx`: contexto de búsqueda en `sessionStorage`.
+- `src/components/CpcClassifier.tsx`: formulario y resultados de clasificación.
+- `src/app/globals.css`: estilos globales.
+- `src/app/layout.tsx`: navegación, pie, chat y fuente Inter mediante `next/font`.
+
+Sin consulta, el catálogo muestra 20 patentes por página. Una búsqueda muestra
+hasta 20 resultados híbridos sin paginación. El chat toma el contexto de la
+búsqueda o de la patente abierta. En `sessionStorage` guarda un objeto versionado
+con la consulta y los IDs; el backend rehidrata los datos antes de llamar al modelo.
+
+Las lecturas del catálogo se revalidan cada 60 segundos y los detalles y similares
+cada 5 minutos. Las búsquedas y demás operaciones `POST` no se almacenan en caché.
+En búsquedas, el total del catálogo se solicita en paralelo con los resultados; en
+el detalle, la patente y sus similares también comienzan a cargarse juntas.
+
+## Verificación y producción
+
+```powershell
+npm run api:check
+npm run lint
+npm test
+npm run build
+npm run test:e2e
+npm run start
+```
+
+Cuando cambie un modelo o endpoint, ejecute `python scripts/export_openapi.py`
+desde `backend/` y después `npm run api:types` desde `frontend/`. CI falla si el
+esquema OpenAPI o los tipos generados están desactualizados.
+
+`test` cubre la persistencia y rehidratación segura del contexto del chat.
+`test:e2e` levanta el build y una API falsa local para verificar catálogo, detalle,
+chat y clasificación sin consumir Supabase ni Gemini. `start` sirve el build de
+producción y requiere ejecutar `build` primero.
+
+El build utiliza `next/font/google` para Inter y necesita acceso al proveedor
+para descargar la fuente. Si el frontend se publica por HTTPS, configure una
+API HTTPS accesible desde el navegador y su origen en `FRONTEND_ORIGIN` del
+backend.

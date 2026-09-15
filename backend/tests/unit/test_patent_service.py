@@ -9,9 +9,13 @@ agregando los casos que faltan para cumplir la rúbrica:
 No usa FastAPI ni HTTP — prueba PatentService directamente.
 """
 
+from unittest.mock import MagicMock, call
+
 import pytest
-from unittest.mock import MagicMock
-from app.services.patent_service import PatentService
+
+from app.errors import ExternalServiceTimeoutError
+from app.observability import MetricsRegistry
+from app.services.patent_service import ALL_COLUMNS, SUMMARY_COLUMNS, PatentService
 
 # Importar datos de muestra desde conftest (disponibles automáticamente)
 # PATENT_SAMPLE y PATENT_LIST los inyecta conftest.py via el fixture mock_supabase
@@ -35,14 +39,11 @@ class TestGetAll:
 
     def test_get_all_devuelve_lista_vacia_cuando_tabla_esta_vacia(self, mock_supabase):
         """Flujo alternativo: tabla vacía → ([], 0) sin lanzar excepción."""
-        mock_supabase.table.return_value.select.return_value.execute.return_value = (
-            MagicMock(count=0)
-        )
         (mock_supabase.table.return_value
              .select.return_value
              .order.return_value
              .range.return_value
-             .execute.return_value) = MagicMock(data=[])
+             .execute.return_value) = MagicMock(data=[], count=0)
 
         service = PatentService(mock_supabase)
         data, total = service.get_all(page=1, page_size=50)
@@ -89,11 +90,26 @@ class TestGetAll:
 
         mock_supabase.table.assert_called_with("patentes")
 
+    def test_get_all_obtiene_datos_y_conteo_en_una_sola_consulta(self, mock_supabase):
+        """El listado no repite una consulta exclusiva para el conteo."""
+        service = PatentService(mock_supabase)
+
+        service.get_all(page=2, page_size=10)
+
+        mock_supabase.table.assert_called_once_with("patentes")
+        mock_supabase.table.return_value.select.assert_called_once_with(
+            SUMMARY_COLUMNS, count="exact"
+        )
+        query = (mock_supabase.table.return_value.select.return_value
+                 .order.return_value.range.return_value)
+        query.execute.assert_called_once_with()
+
     # --- Test existente en tests/db-patents (se conserva sin modificar) ---
     def test_get_all_propaga_error_de_conexion(self):
         """Flujo alternativo: error de conexión con Supabase → se propaga la excepción."""
         mock_client = MagicMock()
-        mock_client.table.return_value.select.return_value.execute.side_effect = (
+        (mock_client.table.return_value.select.return_value.order.return_value
+         .range.return_value.execute.side_effect) = (
             ConnectionError("Supabase no responde")
         )
         service = PatentService(mock_client)
@@ -107,6 +123,24 @@ class TestGetAll:
 # ===========================================================================
 
 class TestGetById:
+
+    def test_get_by_id_records_bounded_supabase_metrics(self, mock_supabase):
+        metrics = MetricsRegistry()
+
+        PatentService(mock_supabase, metrics=metrics).get_by_id(1)
+
+        snapshot = metrics.snapshot()
+        counter = next(
+            item for item in snapshot["counters"]
+            if item["name"] == "dependency_requests_total"
+        )
+        assert counter["labels"] == {
+            "dependency": "supabase",
+            "operation": "detail",
+            "status": "ok",
+        }
+        assert snapshot["gauges"][0]["value"] == 0
+        assert snapshot["durations"][0]["value"]["count"] == 1
 
     def test_get_by_id_retorna_ficha_cuando_id_existe(self, mock_supabase):
         """Happy path: id existente → devuelve dict con los campos de la patente."""
@@ -126,13 +160,46 @@ class TestGetById:
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
-             .single.return_value
+             .maybe_single.return_value
              .execute.return_value) = MagicMock(data=None)
 
         service = PatentService(mock_supabase)
         result = service.get_by_id(99999)
 
         assert result is None
+
+    def test_get_by_id_retries_and_translates_timeout(self, mock_supabase):
+        (mock_supabase.table.return_value
+             .select.return_value
+             .eq.return_value
+             .maybe_single.return_value
+             .execute.side_effect) = TimeoutError("Supabase timeout")
+        sleep = MagicMock()
+
+        with pytest.raises(ExternalServiceTimeoutError) as exc_info:
+            PatentService(mock_supabase, sleep=sleep).get_by_id(1)
+
+        assert exc_info.value.status_code == 504
+        assert exc_info.value.code == "EXTERNAL_SERVICE_TIMEOUT"
+        assert sleep.call_args_list == [call(0.2)]
+
+    def test_get_by_id_recovers_after_transient_connection_error(self, mock_supabase):
+        execute = (mock_supabase.table.return_value
+                   .select.return_value
+                   .eq.return_value
+                   .maybe_single.return_value
+                   .execute)
+        execute.side_effect = [
+            ConnectionError("temporary"),
+            MagicMock(data={"id": 1}),
+        ]
+        sleep = MagicMock()
+
+        result = PatentService(mock_supabase, sleep=sleep).get_by_id(1)
+
+        assert result == {"id": 1}
+        assert execute.call_count == 2
+        sleep.assert_called_once_with(0.2)
 
     def test_get_by_id_filtra_por_el_id_correcto(self, mock_supabase):
         """La query usa .eq('id', patent_id) con el id exacto recibido."""
@@ -145,33 +212,65 @@ class TestGetById:
         eq_call.assert_called_once_with("id", 42)
 
 
+class TestGetByIds:
+
+    def test_get_by_ids_retorna_datos_en_el_orden_solicitado(self, mock_supabase):
+        response = MagicMock(data=[{"id": 2}, {"id": 1}])
+        query = mock_supabase.table.return_value.select.return_value
+        query.in_.return_value.execute.return_value = response
+
+        result = PatentService(mock_supabase).get_by_ids([1, 2])
+
+        assert result == [{"id": 1}, {"id": 2}]
+        mock_supabase.table.return_value.select.assert_called_once_with(
+            SUMMARY_COLUMNS
+        )
+        mock_supabase.table.return_value.select.return_value.in_.assert_called_once_with(
+            "id", [1, 2]
+        )
+
+    def test_get_by_ids_usa_detalle_completo_para_una_patente(self, mock_supabase):
+        response = MagicMock(data=[{"id": 1, "descripcion": "detalle"}])
+        query = mock_supabase.table.return_value.select.return_value
+        query.in_.return_value.execute.return_value = response
+
+        result = PatentService(mock_supabase).get_by_ids([1])
+
+        assert result == [{"id": 1, "descripcion": "detalle"}]
+        mock_supabase.table.return_value.select.assert_called_once_with(ALL_COLUMNS)
+
+    def test_get_by_ids_no_consulta_cuando_la_lista_esta_vacia(self, mock_supabase):
+        result = PatentService(mock_supabase).get_by_ids([])
+
+        assert result == []
+        mock_supabase.table.assert_not_called()
+
+
 # ===========================================================================
 # HU: Buscar patentes — search()
 # ===========================================================================
 
 class TestSearch:
 
+    @staticmethod
+    def configure_search_response(mock_supabase, data=None, count=0):
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock(
+            data={"data": data or [], "count": count}
+        )
+
     def test_search_retorna_resultados_cuando_hay_coincidencias(self, mock_supabase):
         """Happy path: query con matches → devuelve (lista, total) con datos."""
+        self.configure_search_response(mock_supabase, [{"id": 1}], 1)
         service = PatentService(mock_supabase)
 
         data, total = service.search("autonomous vehicle")
 
-        assert isinstance(data, list)
-        assert isinstance(total, int)
+        assert data == [{"id": 1}]
+        assert total == 1
 
     def test_search_retorna_lista_vacia_cuando_no_hay_coincidencias(self, mock_supabase):
         """Flujo alternativo: query sin matches → ([], 0) sin excepción."""
-        (mock_supabase.table.return_value
-             .select.return_value
-             .or_.return_value
-             .execute.return_value) = MagicMock(count=0)
-        (mock_supabase.table.return_value
-             .select.return_value
-             .or_.return_value
-             .order.return_value
-             .range.return_value
-             .execute.return_value) = MagicMock(data=[])
+        self.configure_search_response(mock_supabase)
 
         service = PatentService(mock_supabase)
         data, total = service.search("xyzterminoinexistente123")
@@ -179,31 +278,21 @@ class TestSearch:
         assert data == []
         assert total == 0
 
-    def test_search_filtra_por_ti_ab_y_pn(self, mock_supabase):
-        """El filtro OR debe incluir los campos ti, ab y pn."""
+    def test_search_usa_rpc_parametrizada(self, mock_supabase):
+        """El texto viaja como parámetro y no como expresión PostgREST."""
+        self.configure_search_response(mock_supabase)
         service = PatentService(mock_supabase)
-        service.search("motor electrico")
+        service.search("motor electrico", page=2, page_size=10)
 
-        or_call = (mock_supabase.table.return_value
-                       .select.return_value
-                       .or_)
-        or_call.assert_called()
-        filter_arg = or_call.call_args[0][0]
-        assert "ti.ilike" in filter_arg
-        assert "ab.ilike" in filter_arg
-        assert "pn.ilike" in filter_arg
-
-    def test_search_incluye_el_termino_en_el_filtro(self, mock_supabase):
-        """El término buscado debe estar presente dentro del filtro OR."""
-        termino = "vehiculo autonomo"
-        service = PatentService(mock_supabase)
-        service.search(termino)
-
-        or_call = (mock_supabase.table.return_value
-                       .select.return_value
-                       .or_)
-        filter_arg = or_call.call_args[0][0]
-        assert termino in filter_arg
+        mock_supabase.rpc.assert_called_once_with(
+            "search_patentes_lexical",
+            {
+                "query_text": "motor electrico",
+                "requested_page": 2,
+                "requested_page_size": 10,
+            },
+        )
+        mock_supabase.table.assert_not_called()
 
     @pytest.mark.parametrize("query", [
         "US10123456B2",        # número exacto de patente
@@ -213,8 +302,23 @@ class TestSearch:
     ])
     def test_search_acepta_distintos_formatos_de_query(self, mock_supabase, query):
         """Escenarios: distintos formatos de entrada no deben lanzar excepción."""
+        self.configure_search_response(mock_supabase)
         service = PatentService(mock_supabase)
         data, total = service.search(query)
 
         assert isinstance(data, list)
         assert isinstance(total, int)
+
+    @pytest.mark.parametrize("query", [
+        "),id.gt.0",
+        "100%_eléctrico",
+        'motor\"),(id.gt.0',
+        "barra\\invertida",
+    ])
+    def test_search_envia_entradas_adversariales_como_parametros(
+        self, mock_supabase, query
+    ):
+        self.configure_search_response(mock_supabase)
+        PatentService(mock_supabase).search(query)
+
+        assert mock_supabase.rpc.call_args.args[1]["query_text"] == query

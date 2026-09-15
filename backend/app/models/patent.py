@@ -10,8 +10,8 @@ class _PatentBase(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    id: int | None = None
-    pn: str | None = None
+    id: int
+    pn: str
     apc: str | None = None  # applicant company
     cpc: str | None = None
     ic: str | None = None

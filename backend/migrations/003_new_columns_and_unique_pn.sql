@@ -20,7 +20,7 @@
 --   * Se reconstruye `search_vector` para que el índice FTS también pondere
 --     la categoría temática (`ww`) y el solicitante (`apc`). Eso hace que
 --     buscar "wind turbine" o el nombre de una empresa funcione tanto por
---     léxico (BM25) como por semántica.
+--     léxico (PostgreSQL FTS con ts_rank_cd) como por semántica.
 --
 -- Idempotente: se puede ejecutar varias veces sin error.
 -- Pre-requisito: haber corrido las migraciones 001 y 002 al menos una vez.

@@ -1,7 +1,13 @@
 import Link from "next/link";
 import BackButton from "@/components/BackButton";
-import { fetchPatentById, fetchSimilarPatents, type SimilarPatent } from "@/lib/api";
+import {
+  ApiResponseError,
+  fetchPatentById,
+  fetchSimilarPatents,
+  type SimilarPatent,
+} from "@/lib/api";
 import { notFound } from "next/navigation";
+import { getSafeEspacenetUrl } from "@/lib/urlSafety.mjs";
 import {
   ExternalLink,
   FileText,
@@ -26,25 +32,25 @@ export default async function PatentDetailPage({ params }: Props) {
 
   if (isNaN(patentId)) notFound();
 
-  let patent;
-  try {
-    patent = await fetchPatentById(patentId);
-  } catch {
-    notFound();
+  const [patentResult, similarResult] = await Promise.allSettled([
+    fetchPatentById(patentId),
+    fetchSimilarPatents(patentId, 8),
+  ]);
+
+  if (patentResult.status === "rejected") {
+    const error = patentResult.reason;
+    if (error instanceof ApiResponseError && error.status === 404) notFound();
+    throw error;
   }
 
-  // Carga "patentes similares" en paralelo. Si el embedding aún no existe
-  // o el RPC falla, ignoramos y simplemente no mostramos la sección.
-  let similar: SimilarPatent[] = [];
-  try {
-    const sim = await fetchSimilarPatents(patentId, 8);
-    similar = sim.data;
-  } catch {
-    similar = [];
-  }
+  const patent = patentResult.value;
+  // Si el embedding aún no existe o el RPC falla, mostramos el detalle sin similares.
+  const similar: SimilarPatent[] =
+    similarResult.status === "fulfilled" ? similarResult.value.data : [];
 
   const topic = patent.ww || patent.ws || "";
   const status = patent.lg_st || patent.ls || "";
+  const espacenetUrl = getSafeEspacenetUrl(patent.espacenet);
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
@@ -151,10 +157,10 @@ export default async function PatentDetailPage({ params }: Props) {
             </Section>
           )}
 
-          {patent.espacenet && (
+          {espacenetUrl && (
             <Section icon={ExternalLink} title="Enlace externo">
               <a
-                href={patent.espacenet}
+                href={espacenetUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-medium rounded-xl hover:from-primary-700 hover:to-accent-600 shadow-md shadow-primary-500/20 hover:shadow-lg hover:shadow-primary-500/30 transition-all duration-200 active:scale-[0.98]"

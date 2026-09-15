@@ -18,10 +18,20 @@ from collections import deque
 from dataclasses import dataclass
 from threading import Lock
 
+import requests
 from google import genai
 from google.genai.errors import ClientError
-from google.genai.types import ContentListUnion
+from google.genai.types import ContentListUnion, HttpOptions
 
+from app.observability import NULL_METRICS, MetricsRegistry
+
+
+class GeminiQuotaExhaustedError(RuntimeError):
+    """All configured Gemini models are locally or remotely rate limited."""
+
+
+class GeminiTimeoutError(TimeoutError):
+    """Gemini exceeded its configured network timeout."""
 
 # ---------------------------------------------------------------------------
 # Configuración de límites reales por modelo (free tier)
@@ -103,16 +113,44 @@ class _ModelRateLimiter:
 # ---------------------------------------------------------------------------
 
 class GeminiFallbackClient:
-    def __init__(self, api_key: str, cascade: list[ModelLimits] | None = None):
-        self._client = genai.Client(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        cascade: list[ModelLimits] | None = None,
+        timeout_seconds: float = 45,
+        metrics: MetricsRegistry = NULL_METRICS,
+    ):
+        self._client = genai.Client(
+            api_key=api_key,
+            http_options=HttpOptions(timeout=int(timeout_seconds * 1000)),
+        )
         self._cascade = cascade or MODEL_CASCADE
         self._limiters = {m.name: _ModelRateLimiter(m) for m in self._cascade}
+        self._metrics = metrics
 
     def status(self) -> list[dict]:
         """Útil para debug: muestra el uso actual de cada modelo en la cascada."""
         return [self._limiters[m.name].status() for m in self._cascade]
 
     def generate(self, contents: ContentListUnion, **generate_kwargs) -> str:
+        started_at = time.perf_counter()
+        self._metrics.add_gauge(
+            "dependency_requests_in_flight", 1, dependency="gemini"
+        )
+        try:
+            return self._generate(contents, **generate_kwargs)
+        finally:
+            self._metrics.add_gauge(
+                "dependency_requests_in_flight", -1, dependency="gemini"
+            )
+            self._metrics.observe(
+                "dependency_request_duration_seconds",
+                time.perf_counter() - started_at,
+                dependency="gemini",
+                operation="generate",
+            )
+
+    def _generate(self, contents: ContentListUnion, **generate_kwargs) -> str:
         """
         Intenta generar contenido probando cada modelo de la cascada en orden.
 
@@ -136,26 +174,85 @@ class GeminiFallbackClient:
             if not limiter.try_reserve():
                 # Ya sabemos localmente que este modelo está al límite exacto.
                 # No perdemos una llamada real intentándolo.
+                self._metrics.increment(
+                    "provider_rate_limits_total",
+                    dependency="gemini",
+                    model=model_limits.name,
+                    source="local",
+                )
+                self._metrics.increment(
+                    "provider_fallbacks_total",
+                    dependency="gemini",
+                    model=model_limits.name,
+                    source="rate_limit",
+                )
                 continue
 
+            request_started_at = time.perf_counter()
             try:
                 response = self._client.models.generate_content(
                     model=model_limits.name,
                     contents=contents,
                     **generate_kwargs,
                 )
+                self._metrics.increment(
+                    "dependency_requests_total",
+                    dependency="gemini",
+                    operation="generate",
+                    status="ok",
+                )
                 return response.text
 
+            except requests.Timeout as exc:
+                self._metrics.increment(
+                    "dependency_requests_total",
+                    dependency="gemini",
+                    operation="generate",
+                    status="timeout",
+                )
+                raise GeminiTimeoutError("Gemini request timed out") from exc
             except ClientError as e:
                 if getattr(e, "code", None) == 429:
                     # La cuota real de Google ya se agotó para este modelo
                     # (puede pasar aunque nuestro contador local diga que
                     # había cupo, por ejemplo si otro proceso comparte la key).
                     last_error = e
+                    self._metrics.increment(
+                        "dependency_requests_total",
+                        dependency="gemini",
+                        operation="generate",
+                        status="rate_limited",
+                    )
+                    self._metrics.increment(
+                        "provider_rate_limits_total",
+                        dependency="gemini",
+                        model=model_limits.name,
+                        source="remote",
+                    )
+                    self._metrics.increment(
+                        "provider_fallbacks_total",
+                        dependency="gemini",
+                        model=model_limits.name,
+                        source="rate_limit",
+                    )
                     continue
+                self._metrics.increment(
+                    "dependency_requests_total",
+                    dependency="gemini",
+                    operation="generate",
+                    status="error",
+                )
                 raise  # error real de la API, no de cuota: no tiene sentido cambiar de modelo
+            finally:
+                self._metrics.observe(
+                    "provider_attempt_duration_seconds",
+                    time.perf_counter() - request_started_at,
+                    dependency="gemini",
+                    model=model_limits.name,
+                )
 
-        raise RuntimeError(
+        self._metrics.increment("provider_saturation_total", dependency="gemini")
+        raise GeminiQuotaExhaustedError(
             "Todos los modelos de la cascada agotaron su cuota "
             f"(RPM/RPD). Último error: {last_error}"
         )

@@ -1,23 +1,31 @@
-from fastapi import Depends
-from supabase import Client, create_client
+from fastapi import Depends, Request
+from supabase import Client
 
-from app.config import settings
 from app.services.classification_service import ClassificationService
+from app.services.gemini_client import GeminiFallbackClient
 from app.services.patent_service import PatentService
 
-_classification_service: ClassificationService | None = None
+
+def get_supabase(request: Request) -> Client:
+    return request.app.state.supabase
 
 
-def get_supabase() -> Client:
-    return create_client(settings.supabase_url, settings.supabase_key)
+def get_patent_service(
+    request: Request,
+    client: Client = Depends(get_supabase),
+) -> PatentService:
+    settings = request.app.state.settings
+    return PatentService(
+        client,
+        retry_attempts=settings.external_retry_attempts,
+        retry_backoff_seconds=settings.external_retry_backoff_seconds,
+        metrics=request.app.state.metrics,
+    )
 
 
-def get_patent_service(client: Client = Depends(get_supabase)) -> PatentService:
-    return PatentService(client)
+def get_gemini_client(request: Request) -> GeminiFallbackClient:
+    return request.app.state.gemini
 
 
-def get_classification_service() -> ClassificationService:
-    global _classification_service
-    if _classification_service is None:
-        _classification_service = ClassificationService()
-    return _classification_service
+def get_classification_service(request: Request) -> ClassificationService:
+    return request.app.state.classification_service

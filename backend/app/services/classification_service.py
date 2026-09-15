@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -10,13 +11,14 @@ from typing import Any
 
 import numpy as np
 from google.genai import types
+from google.genai.errors import APIError
 
-from app.config import settings
 from app.models.classification import (
     CpcClassificationPathItem,
     CpcClassificationResponse,
     RecommendedCpcCode,
 )
+from app.observability import NULL_METRICS, MetricsRegistry, log_event
 from app.services.cpc_catalog import (
     CpcCatalog,
     CpcCatalogError,
@@ -25,7 +27,7 @@ from app.services.cpc_catalog import (
     load_cpc_catalog,
 )
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME, encode_query
-from app.services.gemini_client import GeminiFallbackClient
+from app.services.gemini_client import GeminiQuotaExhaustedError, GeminiTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,10 @@ class CpcIndexError(RuntimeError):
     pass
 
 
+class GeminiResponseError(ValueError):
+    """Gemini returned content that cannot produce a valid classification."""
+
+
 @dataclass(frozen=True, slots=True)
 class CpcCandidate:
     raw_code: str
@@ -67,6 +73,7 @@ class ClassificationService:
         embeddings_path: Path = DEFAULT_EMBEDDINGS_PATH,
         manifest_path: Path = DEFAULT_MANIFEST_PATH,
         gemini_client: Any | None = None,
+        metrics: MetricsRegistry = NULL_METRICS,
     ) -> None:
         self.catalog_path = Path(catalog_path)
         self.embeddings_path = Path(embeddings_path)
@@ -75,6 +82,11 @@ class ClassificationService:
         self._catalog: CpcCatalog | None = None
         self._embeddings: np.ndarray | None = None
         self._load_lock = Lock()
+        self._metrics = metrics
+
+    def check_index(self) -> None:
+        """Validate and memory-map the CPC index without running classification."""
+        self._load_index()
 
     def recommend(self, description: str, top_k: int = 8) -> CpcClassificationResponse:
         candidates = self.retrieve(description, GEMINI_CANDIDATE_COUNT)
@@ -89,38 +101,74 @@ class ClassificationService:
         try:
             generated = self._generate_with_gemini(description, candidates, top_k)
             return self._validate_generated(generated, candidates, description, top_k)
-        except Exception as exc:
-            logger.warning("Gemini CPC classification failed; using fallback: %s", exc)
+        except (
+            APIError,
+            GeminiQuotaExhaustedError,
+            GeminiTimeoutError,
+            json.JSONDecodeError,
+            GeminiResponseError,
+        ) as exc:
+            self._metrics.increment(
+                "provider_fallbacks_total",
+                dependency="gemini",
+                model="classification",
+                source=type(exc).__name__,
+            )
+            log_event(
+                logger,
+                logging.WARNING,
+                "classification_fallback",
+                dependency="gemini",
+                error_type=type(exc).__name__,
+                source="local_fallback",
+                status="degraded",
+            )
             return self._fallback_response(description, candidates, top_k)
 
     def retrieve(self, description: str, top_k: int = 40) -> list[CpcCandidate]:
-        catalog, embeddings = self._load_index()
-        query_embedding = np.asarray(encode_query(description), dtype=np.float32)
-        if query_embedding.ndim != 1 or query_embedding.shape[0] != embeddings.shape[1]:
-            raise CpcIndexError(
-                "La dimension del embedding de consulta no coincide con el indice CPC"
+        started_at = time.perf_counter()
+        self._metrics.add_gauge("dependency_requests_in_flight", 1, dependency="cpc")
+        try:
+            catalog, embeddings = self._load_index()
+            query_embedding = np.asarray(encode_query(description), dtype=np.float32)
+            if (
+                query_embedding.ndim != 1
+                or query_embedding.shape[0] != embeddings.shape[1]
+            ):
+                raise CpcIndexError(
+                    "La dimension del embedding de consulta no coincide con el indice CPC"
+                )
+
+            scores = embeddings @ query_embedding
+            eligible_indexes = catalog.eligible_indexes
+            limit = min(max(top_k, 1), eligible_indexes.size)
+            if limit == 0:
+                return []
+
+            eligible_scores = scores[eligible_indexes]
+            if limit < eligible_scores.size:
+                local_indexes = np.argpartition(eligible_scores, -limit)[-limit:]
+            else:
+                local_indexes = np.arange(eligible_scores.size)
+            local_indexes = local_indexes[
+                np.argsort(eligible_scores[local_indexes])[::-1]
+            ]
+            indexes = eligible_indexes[local_indexes]
+
+            return [
+                self._candidate_from_index(catalog, scores, int(index))
+                for index in indexes
+            ]
+        finally:
+            self._metrics.add_gauge(
+                "dependency_requests_in_flight", -1, dependency="cpc"
             )
-
-        scores = embeddings @ query_embedding
-        eligible_indexes = catalog.eligible_indexes
-        limit = min(max(top_k, 1), eligible_indexes.size)
-        if limit == 0:
-            return []
-
-        eligible_scores = scores[eligible_indexes]
-        if limit < eligible_scores.size:
-            local_indexes = np.argpartition(eligible_scores, -limit)[-limit:]
-        else:
-            local_indexes = np.arange(eligible_scores.size)
-        local_indexes = local_indexes[
-            np.argsort(eligible_scores[local_indexes])[::-1]
-        ]
-        indexes = eligible_indexes[local_indexes]
-
-        return [
-            self._candidate_from_index(catalog, scores, int(index))
-            for index in indexes
-        ]
+            self._metrics.observe(
+                "dependency_request_duration_seconds",
+                time.perf_counter() - started_at,
+                dependency="cpc",
+                operation="retrieve",
+            )
 
     def _candidate_from_index(
         self,
@@ -147,12 +195,14 @@ class ClassificationService:
             if self._catalog is not None and self._embeddings is not None:
                 return self._catalog, self._embeddings
 
+            started_at = time.perf_counter()
             for path in (
                 self.catalog_path,
                 self.embeddings_path,
                 self.manifest_path,
             ):
                 if not path.exists():
+                    self._record_index_load("unavailable", started_at, "MissingArtifact")
                     raise CpcIndexError(
                         f"Falta el artefacto CPC {path}. Ejecute exel/index_cpc_codes.py."
                     )
@@ -166,12 +216,37 @@ class ClassificationService:
                     allow_pickle=False,
                 )
             except (CpcCatalogError, OSError, ValueError, json.JSONDecodeError) as exc:
+                self._record_index_load("error", started_at, type(exc).__name__)
                 raise CpcIndexError(f"No se pudo cargar el indice CPC: {exc}") from exc
 
-            self._validate_index(manifest, catalog, embeddings)
+            try:
+                self._validate_index(manifest, catalog, embeddings)
+            except CpcIndexError as exc:
+                self._record_index_load("invalid", started_at, type(exc).__name__)
+                raise
             self._catalog = catalog
             self._embeddings = embeddings
+            self._record_index_load("ready", started_at)
             return catalog, embeddings
+
+    def _record_index_load(
+        self,
+        status: str,
+        started_at: float,
+        error_type: str = "none",
+    ) -> None:
+        duration = time.perf_counter() - started_at
+        self._metrics.increment("cpc_index_loads_total", status=status)
+        self._metrics.observe("cpc_index_load_duration_seconds", duration, status=status)
+        log_event(
+            logger,
+            logging.INFO if status == "ready" else logging.WARNING,
+            "cpc_index_load",
+            dependency="cpc",
+            duration_ms=round(duration * 1000, 2),
+            error_type=error_type,
+            status=status,
+        )
 
     def _validate_index(
         self,
@@ -198,7 +273,7 @@ class ClassificationService:
 
     def _get_gemini_client(self) -> Any:
         if self._gemini_client is None:
-            self._gemini_client = GeminiFallbackClient(api_key=settings.gemini_api_key)
+            raise RuntimeError("Gemini client is not configured")
         return self._gemini_client
 
     def _generate_with_gemini(
@@ -221,16 +296,22 @@ class ClassificationService:
             }
             for item in candidates
         ]
-        prompt = f"""Eres un clasificador CPC experto. Tu tarea es evaluar candidatos CPC ya recuperados por similitud semantica y seleccionar hasta {top_k} codigos que mejor describan la invencion.
+        prompt = f"""Eres un clasificador CPC experto. Evalua los candidatos ya
+recuperados por similitud semantica y selecciona hasta {top_k} codigos que mejor
+describan la invencion.
 
 REGLAS:
 - Solo puedes devolver codigos presentes en CANDIDATOS.
 - No inventes ni completes codigos fuera de la lista.
-- Basa la seleccion en evidencia tecnica explicita de la DESCRIPCION, no solo en el retrieval_score.
-- Prefiere subgrupos especificos sobre grupos principales cuando el subgrupo este claramente respaldado.
-- Usa un grupo principal solo si ningun subgrupo candidato captura con claridad la caracteristica tecnica central.
+- Basa la seleccion en evidencia tecnica explicita de la DESCRIPCION, no solo en
+  el retrieval_score.
+- Prefiere subgrupos especificos sobre grupos principales cuando el subgrupo este
+  claramente respaldado.
+- Usa un grupo principal solo si ningun subgrupo candidato captura con claridad la
+  caracteristica tecnica central.
 - Evita codigos duplicados, demasiado generales o relacionados solo por palabras vagas.
-- Si varios candidatos son parecidos, elige el que coincida mejor con funcion tecnica, problema resuelto, componentes, proceso y campo de aplicacion.
+- Si varios candidatos son parecidos, elige el que coincida mejor con funcion
+  tecnica, problema resuelto, componentes, proceso y campo de aplicacion.
 - Incluye solo codigos defendibles: es mejor devolver pocos codigos precisos que muchos debiles.
 - La razon debe mencionar la evidencia concreta de la descripcion que justifica el codigo.
 - confidence debe ser high, medium o low.
@@ -255,7 +336,7 @@ FORMATO:
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
         if not text:
-            raise ValueError("Gemini devolvio una respuesta vacia")
+            raise GeminiResponseError("Gemini devolvio una respuesta vacia")
         return json.loads(text)
 
     def _validate_generated(
@@ -291,7 +372,9 @@ FORMATO:
                 break
 
         if not recommendations:
-            raise ValueError("Gemini no devolvio codigos CPC validos del conjunto recuperado")
+            raise GeminiResponseError(
+                "Gemini no devolvio codigos CPC validos del conjunto recuperado"
+            )
 
         keywords = self._clean_keywords(generated.get("keywords", []))
         if not keywords:
@@ -319,6 +402,7 @@ FORMATO:
         return self._response(
             recommendations,
             self.extract_keywords(description),
+            local_fallback=True,
             notes=(
                 "Gemini no estuvo disponible; se muestra un resultado de respaldo "
                 "basado unicamente en similitud semantica local."
@@ -354,6 +438,7 @@ FORMATO:
         recommendations: list[RecommendedCpcCode],
         keywords: list[str],
         notes: str | None = None,
+        local_fallback: bool = False,
     ) -> CpcClassificationResponse:
         return CpcClassificationResponse(
             recommended_codes=recommendations,
@@ -362,6 +447,7 @@ FORMATO:
                 [item.code for item in recommendations],
                 keywords,
             ),
+            local_fallback=local_fallback,
             notes=notes or (
                 "Sugerencia preliminar basada en recuperacion semantica local. "
                 "Verifique manualmente la clasificacion y los resultados en Google Patents."

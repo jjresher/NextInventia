@@ -37,3 +37,4 @@ class CpcClassificationResponse(BaseModel):
     keywords: list[str]
     google_patents_query: str
     notes: str
+    local_fallback: bool = False

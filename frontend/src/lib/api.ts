@@ -1,97 +1,102 @@
+import { z } from "zod";
+import type { components } from "./api.generated";
+import {
+  chatResponseSchema,
+  cpcClassificationResponseSchema,
+  paginatedResponseSchema,
+  patentSchema,
+  semanticSearchResponseSchema,
+  similarPatentsResponseSchema,
+} from "./api.schemas";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const CATALOG_REVALIDATE_SECONDS = 60;
+const PATENT_REVALIDATE_SECONDS = 300;
+const API_TIMEOUT_MS = positiveMilliseconds(
+  process.env.NEXT_PUBLIC_API_TIMEOUT_MS,
+  15_000
+);
+const LONG_API_TIMEOUT_MS = positiveMilliseconds(
+  process.env.NEXT_PUBLIC_LONG_API_TIMEOUT_MS,
+  60_000
+);
 
-/**
- * Versión resumida de una patente. Refleja las columnas devueltas por
- * `SUMMARY_COLUMNS` en el backend; incluye los campos nuevos (`apc`, `ww`,
- * `pd`, `lg_st`, `cluster_id`) y deja los legacy (`pc`, `ws`, `ls`)
- * opcionales para compatibilidad con datos viejos no migrados.
- */
-export interface PatentSummary {
-  id: number;
-  pn: string;
-  ti?: string;
-  ab?: string;
-  cpc?: string;
-  ic?: string;
-  apc?: string | null;
-  pd?: string | null;
-  ww?: string | null;
-  lg_st?: string | null;
-  cluster_id?: number | null;
-  espacenet?: string;
-
-  // Campos legacy: existen para datos viejos pero no se llenan en cargas nuevas.
-  pc?: string | null;
-  ws?: string | null;
-  ls?: string | null;
+interface RequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
-export interface Patent extends PatentSummary {
-  descripcion?: string;
-  claimen?: string;
+export class ApiResponseError extends Error {
+  constructor(public readonly status: number) {
+    super(`Error ${status}`);
+    this.name = "ApiResponseError";
+  }
 }
 
-export interface PaginatedResponse {
-  data: PatentSummary[];
-  count: number;
-  page: number;
-  page_size: number;
+export class ApiContractError extends Error {
+  constructor() {
+    super("La API devolvió una respuesta incompatible.");
+    this.name = "ApiContractError";
+  }
 }
 
-export interface SemanticSearchResult extends PatentSummary {
-  /** Score de Reciprocal Rank Fusion (0–~0.033). Más alto = más relevante. */
-  rrf_score: number | null;
-  /** Posición en el ranking BM25/FTS (null si solo apareció en semántico). */
-  fts_rank: number | null;
-  /** Posición en el ranking semántico/KNN (null si solo apareció en léxico). */
-  sem_rank: number | null;
+export class ApiTimeoutError extends Error {
+  constructor() {
+    super("La solicitud tardó demasiado. Intenta nuevamente.");
+    this.name = "ApiTimeoutError";
+  }
 }
 
-export interface SemanticSearchResponse {
-  query: string;
-  data: SemanticSearchResult[];
-  count: number;
+export class ApiCancelledError extends Error {
+  constructor() {
+    super("La solicitud fue cancelada.");
+    this.name = "ApiCancelledError";
+  }
 }
 
-export interface SimilarPatent {
-  id: number;
-  pn?: string | null;
-  ti?: string | null;
-  ab?: string | null;
-  ww?: string | null;
-  apc?: string | null;
-  cluster_id?: number | null;
-  /** Distancia coseno (0 = idénticas, 2 = opuestas). */
-  distance: number | null;
+function positiveMilliseconds(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export interface SimilarPatentsResponse {
-  patent_id: number;
-  data: SimilarPatent[];
-  count: number;
+async function apiFetch(
+  input: string,
+  init: RequestInit,
+  options: RequestOptions,
+  defaultTimeoutMs: number
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? defaultTimeoutMs);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
+  try {
+    return await fetch(input, { ...init, signal });
+  } catch (error) {
+    if (timeoutSignal.aborted) throw new ApiTimeoutError();
+    if (options.signal?.aborted) throw new ApiCancelledError();
+    throw error;
+  }
 }
 
-export interface RecommendedCpcCode {
-  code: string;
-  title: string;
-  level: "main_group" | "subgroup";
-  classification_path: CpcClassificationPathItem[];
-  reason: string;
-  confidence: "high" | "medium" | "low";
-  retrieval_score: number;
-}
+type Schema<Name extends keyof components["schemas"]> = components["schemas"][Name];
 
-export interface CpcClassificationPathItem {
-  code: string;
-  title: string;
-  level: "section" | "class" | "subclass" | "main_group";
-}
+export type PatentSummary = Schema<"PatentSummary">;
+export type Patent = Schema<"Patent">;
+export type PaginatedResponse = Schema<"PaginatedResponse">;
+export type SemanticSearchResult = Schema<"SemanticSearchResult">;
+export type SemanticSearchResponse = Schema<"SemanticSearchResponse">;
+export type SimilarPatent = Schema<"SimilarPatent">;
+export type SimilarPatentsResponse = Schema<"SimilarPatentsResponse">;
+export type CpcClassificationResponse = z.output<typeof cpcClassificationResponseSchema>;
+export type ChatMessage = Schema<"Message">;
 
-export interface CpcClassificationResponse {
-  recommended_codes: RecommendedCpcCode[];
-  keywords: string[];
-  google_patents_query: string;
-  notes: string;
+async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
+  const payload: unknown = await response.json().catch(() => {
+    throw new ApiContractError();
+  });
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) throw new ApiContractError();
+  return parsed.data;
 }
 
 /**
@@ -101,7 +106,8 @@ export interface CpcClassificationResponse {
 export async function fetchPatents(
   page = 1,
   pageSize = 20,
-  query?: string
+  query?: string,
+  options: RequestOptions = {}
 ): Promise<PaginatedResponse> {
   const params = new URLSearchParams({
     page: String(page),
@@ -109,19 +115,32 @@ export async function fetchPatents(
   });
   if (query) params.set("q", query);
 
-  const res = await fetch(`${API_URL}/patentes/?${params}`, { cache: "no-store" });
+  const res = await apiFetch(
+    `${API_URL}/patentes/?${params}`,
+    { next: { revalidate: CATALOG_REVALIDATE_SECONDS } },
+    options,
+    API_TIMEOUT_MS
+  );
   if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+  return parseResponse(res, paginatedResponseSchema);
 }
 
-export async function fetchPatentById(id: number): Promise<Patent> {
-  const res = await fetch(`${API_URL}/patentes/${id}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+export async function fetchPatentById(
+  id: number,
+  options: RequestOptions = {}
+): Promise<Patent> {
+  const res = await apiFetch(
+    `${API_URL}/patentes/${id}`,
+    { next: { revalidate: PATENT_REVALIDATE_SECONDS } },
+    options,
+    API_TIMEOUT_MS
+  );
+  if (!res.ok) throw new ApiResponseError(res.status);
+  return parseResponse(res, patentSchema);
 }
 
 /**
- * Búsqueda híbrida BM25 + Sentence-BERT con fusión RRF. Devuelve `top_k`
+ * Búsqueda híbrida PostgreSQL FTS + Sentence-BERT con fusión RRF. Devuelve `top_k`
  * resultados ordenados por `rrf_score`. Funciona en lenguaje natural y en
  * español o inglés indistintamente (modelo multilingüe).
  *
@@ -130,16 +149,22 @@ export async function fetchPatentById(id: number): Promise<Patent> {
  */
 export async function searchSemantic(
   query: string,
-  topK = 20
+  topK = 20,
+  options: RequestOptions = {}
 ): Promise<SemanticSearchResponse> {
-  const res = await fetch(`${API_URL}/patentes/search/semantic`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, top_k: topK }),
-    cache: "no-store",
-  });
+  const res = await apiFetch(
+    `${API_URL}/patentes/search/semantic`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: topK }),
+      cache: "no-store",
+    },
+    options,
+    LONG_API_TIMEOUT_MS
+  );
   if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+  return parseResponse(res, semanticSearchResponseSchema);
 }
 
 /**
@@ -148,26 +173,35 @@ export async function searchSemantic(
  */
 export async function fetchSimilarPatents(
   id: number,
-  topK = 8
+  topK = 8,
+  options: RequestOptions = {}
 ): Promise<SimilarPatentsResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_URL}/patentes/${id}/similares?top_k=${topK}`,
-    { cache: "no-store" }
+    { next: { revalidate: PATENT_REVALIDATE_SECONDS } },
+    options,
+    LONG_API_TIMEOUT_MS
   );
   if (!res.ok) throw new Error(`Error ${res.status}`);
-  return res.json();
+  return parseResponse(res, similarPatentsResponseSchema);
 }
 
 export async function recommendCpcCodes(
   description: string,
-  topK = 8
+  topK = 8,
+  options: RequestOptions = {}
 ): Promise<CpcClassificationResponse> {
-  const res = await fetch(`${API_URL}/clasificacion/cpc/recommend`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description, top_k: topK }),
-    cache: "no-store",
-  });
+  const res = await apiFetch(
+    `${API_URL}/clasificacion/cpc/recommend`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description, top_k: topK }),
+      cache: "no-store",
+    },
+    options,
+    LONG_API_TIMEOUT_MS
+  );
 
   if (!res.ok) {
     const payload = await res.json().catch(() => null);
@@ -177,5 +211,34 @@ export async function recommendCpcCodes(
         : "No fue posible analizar la descripción.";
     throw new Error(detail);
   }
-  return res.json();
+  return parseResponse(res, cpcClassificationResponseSchema);
+}
+
+export async function sendChat(
+  message: string,
+  history: ChatMessage[],
+  patentIds: number[],
+  options: RequestOptions = {}
+): Promise<string> {
+  const res = await apiFetch(
+    `${API_URL}/chat/`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history, patent_ids: patentIds }),
+    },
+    options,
+    LONG_API_TIMEOUT_MS
+  );
+  if (!res.ok) {
+    const payload: unknown = await res.json().catch(() => null);
+    const detail =
+      payload && typeof payload === "object" && "detail" in payload &&
+      typeof payload.detail === "string"
+        ? payload.detail
+        : `Error ${res.status}`;
+    throw new Error(detail);
+  }
+  const data = await parseResponse(res, chatResponseSchema);
+  return data.reply;
 }

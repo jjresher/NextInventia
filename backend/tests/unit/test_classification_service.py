@@ -5,12 +5,14 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from app.observability import MetricsRegistry
 from app.services.classification_service import (
     ClassificationService,
     CpcIndexError,
 )
 from app.services.cpc_catalog import file_sha256
 from app.services.embedding_service import EMBEDDING_DIM, MODEL_NAME
+from app.services.gemini_client import GeminiQuotaExhaustedError, GeminiTimeoutError
 
 
 def vector(value: float, axis: int = 0) -> np.ndarray:
@@ -113,15 +115,24 @@ def test_retrieve_orders_only_group_codes(local_index, monkeypatch):
     assert isinstance(service._embeddings, np.memmap)
 
 
-def test_missing_index_has_clear_error(tmp_path):
+def test_missing_index_has_clear_error_and_safe_signal(tmp_path, caplog):
+    metrics = MetricsRegistry()
     service = ClassificationService(
         catalog_path=tmp_path / "missing.csv",
         embeddings_path=tmp_path / "missing.npy",
         manifest_path=tmp_path / "missing.json",
+        metrics=metrics,
     )
 
     with pytest.raises(CpcIndexError, match="Falta el artefacto CPC"):
         service.retrieve("motor")
+
+    assert any(
+        item["name"] == "cpc_index_loads_total"
+        and item["labels"] == {"status": "unavailable"}
+        for item in metrics.snapshot()["counters"]
+    )
+    assert "missing.csv" not in caplog.text
 
 
 def test_changed_catalog_is_rejected(local_index):
@@ -197,20 +208,74 @@ def test_gemini_prompt_includes_selection_criteria_and_semantic_context(local_in
     assert "Specific concept: Controlling intake air." in prompt
 
 
-def test_fallback_when_gemini_fails(local_index, monkeypatch):
+def test_fallback_when_gemini_quota_is_exhausted(local_index, monkeypatch, caplog):
     monkeypatch.setattr(
         "app.services.classification_service.encode_query",
         lambda _: query_vector(),
     )
     client = MagicMock()
-    client.generate.side_effect = RuntimeError("unavailable")
-    service = ClassificationService(*local_index, gemini_client=client)
+    client.generate.side_effect = GeminiQuotaExhaustedError("unavailable")
+    metrics = MetricsRegistry()
+    service = ClassificationService(
+        *local_index,
+        gemini_client=client,
+        metrics=metrics,
+    )
 
     result = service.recommend("control electronico e inyeccion", top_k=2)
 
     assert len(result.recommended_codes) == 2
     assert result.recommended_codes[0].code == "F02D 41/0002"
     assert "respaldo" in result.notes
+    assert result.local_fallback is True
+    assert "classification_fallback" in caplog.text
+    assert "control electronico" not in caplog.text
+    assert any(
+        item["name"] == "provider_fallbacks_total"
+        for item in metrics.snapshot()["counters"]
+    )
+
+
+def test_fallback_when_gemini_times_out(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.side_effect = GeminiTimeoutError("slow")
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    result = service.recommend("control electronico", top_k=2)
+
+    assert len(result.recommended_codes) == 2
+    assert result.local_fallback is True
+
+
+def test_fallback_when_gemini_returns_invalid_json(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.return_value = "not-json"
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    result = service.recommend("control electronico", top_k=2)
+
+    assert result.local_fallback is True
+
+
+def test_unexpected_exception_is_not_hidden_by_fallback(local_index, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.classification_service.encode_query",
+        lambda _: query_vector(),
+    )
+    client = MagicMock()
+    client.generate.side_effect = TypeError("internal bug")
+    service = ClassificationService(*local_index, gemini_client=client)
+
+    with pytest.raises(TypeError, match="internal bug"):
+        service.recommend("control electronico", top_k=2)
 
 
 def test_google_patents_query_template():

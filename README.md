@@ -36,8 +36,26 @@ flowchart LR
 | Backend | FastAPI, Pydantic | API y coordinación de servicios |
 | Patentes | Supabase, PostgreSQL, pgvector | Persistencia, FTS, búsqueda semántica y similitud |
 | Embeddings | `paraphrase-multilingual-MiniLM-L12-v2` | Vectores multilingües normalizados de 384 dimensiones |
-| Generación | Gemini 2.5 Flash Lite | Chat, selección final de CPC, razones y palabras clave |
+| Generación | Gemini con cascada de modelos | Chat, selección final de CPC, razones y palabras clave |
 | CPC | CSV + NumPy `memmap` | Recuperación vectorial plana de códigos CPC |
+
+### Modelos y respaldo de Gemini
+
+Chat y clasificación usan `backend/app/services/gemini_client.py`. El orden
+configurado en `MODEL_CASCADE` es `gemini-3.5-flash-lite`,
+`gemini-3.1-flash-lite` y `gemini-2.5-flash-lite`. El cliente pasa al siguiente
+modelo al alcanzar el límite local de peticiones o recibir un error 429.
+Otros errores de la API se propagan sin intentar el siguiente modelo.
+
+Los límites RPM/RPD son valores configurados en el código, no una consulta de la
+cuota disponible en Google. Los contadores viven en memoria por instancia del
+cliente; chat y clasificación tienen instancias separadas y tampoco comparten
+contadores entre procesos. Revise modelos y límites según el proyecto de Google
+utilizado.
+
+Si Gemini falla durante la clasificación, se devuelven hasta cinco candidatos
+locales (respetando `top_k`) y una explicación en `notes`. El chat no tiene una
+respuesta local de respaldo.
 
 ## Estructura del repositorio
 
@@ -78,7 +96,7 @@ Proyecto-patentes/
 ### 1. Clonar el repositorio
 
 ```powershell
-git clone <URL_DEL_REPOSITORIO>
+git clone https://github.com/jjresher/NextInventia.git
 cd Proyecto-patentes
 ```
 
@@ -92,14 +110,25 @@ py -m venv .venv
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+pip install --require-hashes -r requirements-dev.lock
 ```
 
-`requirements-dev.txt` incluye las dependencias de ejecución y las herramientas de
-pruebas. Para una instalación de producción puede usarse solamente:
+Los archivos `requirements*.txt` declaran rangos deliberados de dependencias
+directas; los `requirements*.lock` fijan versiones transitivas y hashes para Python
+3.13. Producción instala solamente:
 
 ```powershell
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
+```
+
+Para ejecutar únicamente los procesos de `backend/exel/`, use
+`requirements-offline.lock`. Al cambiar un archivo de entrada, regenere y revise los
+locks desde `backend/` con la versión de `uv` fijada en el lock de desarrollo:
+
+```powershell
+uv pip compile --universal --generate-hashes --python-version 3.13 --output-file requirements.lock requirements.txt
+uv pip compile --universal --generate-hashes --python-version 3.13 --output-file requirements-offline.lock requirements-offline.txt
+uv pip compile --universal --generate-hashes --python-version 3.13 --output-file requirements-dev.lock requirements-dev.txt
 ```
 
 En Linux o macOS, la activación equivalente es:
@@ -108,23 +137,41 @@ En Linux o macOS, la activación equivalente es:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements-dev.txt
+pip install --require-hashes -r requirements-dev.lock
 ```
 
 ### 3. Configurar el backend
 
-Cree `backend/.env`:
+Desde `backend/`, copie la plantilla y complete las credenciales:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Configuración de `backend/.env`:
 
 ```dotenv
 SUPABASE_URL=https://TU_PROYECTO.supabase.co
-SUPABASE_KEY=TU_CLAVE_DE_SUPABASE
+# Clave anon (solo lectura). La usa unicamente el backend del API.
+SUPABASE_ANON_KEY=TU_CLAVE_ANON_DE_SUPABASE
+# Clave service_role (escritura). Solo para los procesos de exel/; no la
+# configure en el entorno donde corre el API.
+SUPABASE_SERVICE_ROLE_KEY=TU_CLAVE_SERVICE_ROLE_DE_SUPABASE
 GEMINI_API_KEY=TU_CLAVE_DE_GEMINI
 
 # Origen exacto del frontend principal.
 FRONTEND_ORIGIN=http://localhost:3000
+APP_ENVIRONMENT=development
 
-# Permite localhost y redes privadas 10.x, 172.16-31.x y 192.168.x durante desarrollo.
-ALLOW_LOCAL_NETWORK_ORIGINS=true
+# Habilítelo solo para desarrollo desde otros equipos de la red privada.
+ALLOW_LOCAL_NETWORK_ORIGINS=false
+
+# Presupuestos de tiempo y reintentos de lecturas externas.
+SUPABASE_TIMEOUT_SECONDS=10
+GEMINI_TIMEOUT_SECONDS=45
+REQUEST_TIMEOUT_SECONDS=60
+EXTERNAL_RETRY_ATTEMPTS=2
+EXTERNAL_RETRY_BACKOFF_SECONDS=0.2
 ```
 
 Notas:
@@ -133,6 +180,8 @@ Notas:
 - Para scripts de carga administrativa use una clave de Supabase con permisos
   suficientes. No exponga una `service_role` en el frontend ni en Git.
 - Los archivos `.env` están ignorados por Git.
+- Ejecute los comandos del backend desde `backend/`: la configuración busca
+  `.env` en el directorio de trabajo.
 
 ### 4. Preparar el índice CPC
 
@@ -223,6 +272,26 @@ npm run dev -- --hostname 0.0.0.0 --port 3000
 
 Abra <http://localhost:3000> o `http://IP_DE_LA_MAQUINA:3000`.
 
+La URL de la API debe ser accesible tanto desde el servidor Next.js como desde
+el navegador: el listado se consulta en el servidor, mientras que el chat y el
+clasificador hacen peticiones desde el navegador. En producción use HTTPS si el
+frontend también se sirve por HTTPS.
+
+## Uso de la aplicación
+
+| Ruta del frontend | Uso |
+| --- | --- |
+| `/` | Catálogo de 20 patentes por página; al buscar, hasta 20 resultados híbridos sin paginación |
+| `/patentes/{id}` | Detalle y patentes similares |
+| `/clasificar` | Descripción técnica, códigos CPC, ruta jerárquica y ecuación para Google Patents |
+| `/acerca` | Información del proyecto |
+
+El chat flotante usa el contexto de la búsqueda o de la patente abierta. El
+backend incluye como máximo 20 patentes en el contexto; en la vista de detalle
+añade hasta 4000 caracteres de descripción y 3000 de reivindicaciones. El
+frontend conserva en `sessionStorage` solamente una versión del formato, la
+consulta y los IDs de contexto; no duplica abstracts, descripciones ni claims.
+
 ## Configuración de Supabase
 
 El repositorio asume que ya existe una tabla base llamada `patentes`. Las migraciones
@@ -246,6 +315,11 @@ Ejecute en el SQL Editor de Supabase, en este orden:
 1. `backend/migrations/001_enable_extensions_and_columns.sql`
 2. `backend/migrations/002_hybrid_search_function.sql`
 3. `backend/migrations/003_new_columns_and_unique_pn.sql`
+4. `backend/migrations/004_parameterized_lexical_search.sql`
+
+La migración 003 elimina filas con `pn` duplicado y conserva la de mayor `id`
+antes de crear la restricción única. Revise los duplicados y respalde los datos
+antes de aplicarla a una base existente.
 
 Las migraciones habilitan:
 
@@ -324,6 +398,43 @@ Este paso requiere que las patentes ya tengan embeddings.
 | `POST` | `/clasificacion/cpc/recommend` | Recomendación local de CPC y ecuación Google Patents |
 | `POST` | `/chat/` | Chat Gemini con contexto de patentes |
 
+Límites de entrada:
+
+| Operación | Parámetros |
+| --- | --- |
+| Listado | `page >= 1`; `page_size` de 1 a 200 (por defecto 50); `q` opcional, de 1 a 200 caracteres y no solo espacios |
+| Búsqueda híbrida | `query` de 1 a 2000 caracteres; `top_k` de 1 a 100 (por defecto 20) |
+| Similares | `top_k` de 1 a 50 (por defecto 10) |
+| Clasificación CPC | `description` de 1 a 6000 caracteres, no solo espacios; `top_k` de 1 a 20 (por defecto 8) |
+
+El chat recibe `message`, `history` (hasta 12 mensajes con roles `user` o `model`)
+y `patent_ids` (hasta 20 enteros positivos); devuelve `reply`. Los dos últimos
+campos son opcionales. El servidor rehidrata las patentes desde Supabase y aplica
+presupuestos de longitud antes de llamar a Gemini. Consulte `/docs` para ver los
+contratos completos.
+
+Los errores controlados de chat y clasificación devuelven un `detail` estable,
+un `code` legible por máquina y un `correlation_id`. Ese mismo identificador se
+expone en la cabecera `X-Correlation-ID` de todas las respuestas para poder
+relacionar un fallo público con el log interno sin publicar datos sensibles.
+
+Las lecturas de Supabase se reintentan únicamente ante fallos transitorios, con
+backoff y un máximo configurable. Las solicitudes a Gemini no se reintentan tras
+un fallo ambiguo. Cada proveedor tiene su timeout y la API aplica además un
+presupuesto total por request; los timeouts controlados devuelven HTTP 504.
+
+`GET /` y `GET /health/live` son comprobaciones baratas de liveness y no consultan
+dependencias. `GET /health/ready` comprueba Supabase y el índice CPC, informa el
+estado de cada componente y devuelve 503 mientras alguno no esté disponible; no
+envía solicitudes a Gemini. La clasificación devuelve 503 cuando faltan artefactos
+del índice o no son compatibles; los parámetros que incumplen los contratos
+devuelven 422.
+
+`GET /metrics` expone contadores, concurrencia y duraciones acotadas para HTTP,
+Supabase, Gemini y CPC. Son métricas en memoria por proceso y no incluyen entradas
+del usuario. La política de logs, redacción y alertas mínimas está documentada en
+[Observabilidad operativa](docs/operations/observability.md).
+
 Ejemplo de clasificación CPC:
 
 ```powershell
@@ -364,16 +475,35 @@ python -m pytest -q
 
 # Estilo de Python
 python -m ruff check app exel tests
+
+# Auditoría de dependencias de producción
+python -m pip_audit -r requirements.lock --require-hashes
 ```
 
 Los tests usan clientes falsos; no realizan llamadas reales a Supabase ni Gemini.
+La configuración de pruebas proporciona credenciales ficticias, por lo que no
+requiere un `.env` real. Estas pruebas no validan las cuotas ni los permisos de
+los servicios desplegados.
 
 Frontend, desde `frontend/`:
 
 ```powershell
+npm run api:check
+npm test
 npm run lint
 npm run build
+npm run test:e2e
+npm audit --omit=dev --audit-level=high
 ```
+
+El contrato versionado vive en `backend/openapi.json`. Para actualizarlo tras un
+cambio de API, ejecute `python scripts/export_openapi.py` desde `backend/` y luego
+`npm run api:types` desde `frontend/`. Las respuestas críticas se validan en runtime
+antes de entregarlas a los componentes.
+
+El workflow `.github/workflows/ci.yml` ejecuta estos checks en cada pull request,
+usa servicios falsos para los smoke tests E2E y analiza secretos con Gitleaks. No
+requiere credenciales reales de Supabase ni Gemini.
 
 Para probar el build de producción:
 
@@ -389,11 +519,14 @@ npm run start
 3. Configure `NEXT_PUBLIC_API_URL=http://IP_DEL_BACKEND:8000`.
 4. Abra `http://IP_DEL_FRONTEND:3000` desde el otro dispositivo.
 
-El backend permite por defecto orígenes HTTP de `localhost`, `127.0.0.1` y rangos
-privados `10.x`, `172.16-31.x` y `192.168.x`. En producción configure un
-`FRONTEND_ORIGIN` exacto y use:
+El backend permite por defecto únicamente el `FRONTEND_ORIGIN` exacto. Para aceptar
+durante desarrollo orígenes HTTP de `localhost`, `127.0.0.1` y rangos privados
+`10.x`, `172.16-31.x` y `192.168.x`, habilite la opción explícitamente. En
+producción el regex de red privada permanece deshabilitado aunque se configure por
+error:
 
 ```dotenv
+APP_ENVIRONMENT=production
 ALLOW_LOCAL_NETWORK_ORIGINS=false
 ```
 
@@ -403,7 +536,7 @@ Reinicie los procesos después de cambiar variables de entorno.
 
 ### Backend
 
-- Instale `backend/requirements.txt`.
+- Instale `backend/requirements.lock` con `pip install --require-hashes`.
 - Configure todas las variables de `backend/.env` en el proveedor de hosting.
 - Proporcione el directorio `backend/data/cpc_index/` como volumen o artefacto si se
   usará la clasificación CPC.
@@ -416,6 +549,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### Frontend
 
 - Configure `NEXT_PUBLIC_API_URL` antes de ejecutar `npm run build`.
+- Si cambia esa variable después del build, vuelva a compilar el frontend.
 - Ejecute `npm ci`, `npm run build` y `npm run start`.
 - Añada el dominio final del frontend a `FRONTEND_ORIGIN` en el backend.
 
@@ -446,8 +580,9 @@ consultas reutilizan el modelo en memoria.
 
 ### RPC de Supabase inexistente
 
-Ejecute las migraciones 001, 002 y 003 en orden. Verifique que las funciones
-`search_patentes_hybrid` y `patentes_similares` existan en Supabase.
+Ejecute las migraciones 001, 002, 003 y 004 en orden. Verifique que las funciones
+`search_patentes_hybrid`, `patentes_similares` y `search_patentes_lexical` existan
+en Supabase.
 
 ### Gemini devuelve 429 o 502
 
@@ -484,3 +619,10 @@ iniciar otro build.
 - El catálogo CPC completo no se distribuye mediante Git.
 - La calidad depende del contenido y versión de `titles.csv`.
 - Gemini solo puede escoger entre los candidatos recuperados localmente.
+
+## Documentación adicional
+
+- [Frontend: ejecución, rutas y configuración](frontend/README.md).
+- [Clasificación CPC: índice, recuperación y contrato](backend/CPC_CLASSIFICATION.md).
+- [Auditoría de código](AUDITORIA_CODIGO.md): hallazgos de la revisión;
+  contraste su estado con el código actual.

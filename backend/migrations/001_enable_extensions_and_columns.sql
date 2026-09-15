@@ -1,8 +1,8 @@
 -- =============================================================================
--- Migración 001: Habilitar búsqueda híbrida (BM25 + Semántica) sobre `patentes`
+-- Migración 001: Habilitar búsqueda híbrida (PostgreSQL FTS + semántica) sobre `patentes`
 -- =============================================================================
 -- Activa las extensiones necesarias y agrega las columnas/índices que soportan:
---   * Búsqueda léxica  (Postgres FTS, similar a BM25) -> columna `search_vector`
+--   * Búsqueda léxica (PostgreSQL FTS con ts_rank_cd) -> columna `search_vector`
 --   * Búsqueda semántica (Sentence-BERT + KNN)        -> columna `embedding`
 --   * Clustering K-means para "patentes similares"    -> columna `cluster_id`
 --

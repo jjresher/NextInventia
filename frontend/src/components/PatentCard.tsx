@@ -4,7 +4,7 @@ import type { PatentSummary } from "@/lib/api";
 
 interface Props {
   patent: PatentSummary;
-  /** Posición en el ranking BM25/FTS (sólo si viene de búsqueda híbrida). */
+  /** Posición en el ranking PostgreSQL FTS (sólo si viene de búsqueda híbrida). */
   ftsRank?: number | null;
   /** Posición en el ranking semántico (sólo si viene de búsqueda híbrida). */
   semRank?: number | null;

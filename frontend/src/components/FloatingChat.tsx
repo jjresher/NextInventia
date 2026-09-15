@@ -5,37 +5,68 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Sparkles, Send, ChevronDown, Bot, User, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
+import { getSafeHttpsUrl, getSafePatentPath } from "@/lib/urlSafety.mjs";
+import {
+  buildChatHistory,
+  readChatContext,
+  removeLegacyChatContext,
+} from "@/lib/chatContext.mjs";
+import {
+  ApiCancelledError,
+  fetchPatentById,
+  sendChat,
+  type ChatMessage,
+  type Patent,
+} from "@/lib/api";
 
-interface Message {
-  role: "user" | "model";
-  content: string;
+type Message = ChatMessage;
+
+function ChatLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const patentPath = getSafePatentPath(href);
+  if (patentPath) {
+    return (
+      <Link
+        href={patentPath}
+        className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-100 text-primary-700 rounded-md font-mono text-xs font-medium hover:bg-primary-200 transition-colors"
+      >
+        {children}
+      </Link>
+    );
+  }
+
+  const externalUrl = getSafeHttpsUrl(href);
+  if (!externalUrl) {
+    return <span className="break-all text-gray-600">{children} (enlace no permitido)</span>;
+  }
+
+  return (
+    <a
+      href={externalUrl.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Abrir sitio externo: ${externalUrl.hostname}`}
+      className="break-all underline text-primary-600 hover:text-primary-800"
+    >
+      {children} <span className="text-[0.85em]">({externalUrl.hostname})</span>
+    </a>
+  );
 }
 
-interface PatentContext {
-  id: number;
-  pn?: string;
-  ti?: string;
-  ab?: string;
-  apc?: string | null;
-  pc?: string | null;
-  cpc?: string;
-  pd?: string | null;
-  [key: string]: unknown;
-}
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-function welcomeMessage(patents: PatentContext[], contextLabel: string): Message {
-  if (patents.length === 1) {
+function welcomeMessage(
+  patentCount: number,
+  contextLabel: string,
+  patent?: Patent
+): Message {
+  if (patentCount === 1 && patent) {
     return {
       role: "model",
-      content: `Hola! Estoy listo para ayudarte con la patente **${patents[0].pn ?? ""}** — ${patents[0].ti ?? ""}. ¿Qué quieres saber?`,
+      content: `Hola! Estoy listo para ayudarte con la patente **${patent.pn ?? ""}** — ${patent.ti ?? ""}. ¿Qué quieres saber?`,
     };
   }
-  if (patents.length > 1) {
+  if (patentCount > 0) {
     return {
       role: "model",
-      content: `Hola! Encontré **${patents.length} patentes** para "${contextLabel}". ¿Qué quieres saber sobre estos resultados?`,
+      content: `Hola! Encontré **${patentCount} patentes** para "${contextLabel}". ¿Qué quieres saber sobre estos resultados?`,
     };
   }
   return {
@@ -49,46 +80,62 @@ export default function FloatingChat() {
   const searchParams = useSearchParams();
 
   const [open, setOpen] = useState(false);
-  const [patents, setPatents] = useState<PatentContext[]>([]);
+  const [patentIds, setPatentIds] = useState<number[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const activeChatRequest = useRef<AbortController | null>(null);
 
   // Recarga contexto cuando cambia la ruta (incluso con chat abierto)
   useEffect(() => {
+    const contextRequest = new AbortController();
     const patentMatch = pathname.match(/^\/patentes\/(\d+)$/);
     const query = searchParams.get("q");
 
-    setPatents([]);
+    setPatentIds([]);
     setMessages([]);
+    setLoadingContext(false);
 
     if (!open) return;
 
+    removeLegacyChatContext(sessionStorage);
+
     if (patentMatch) {
       setLoadingContext(true);
-      fetch(`${API_URL}/patentes/${patentMatch[1]}`, { cache: "no-store" })
-        .then((r) => r.json())
+      fetchPatentById(Number(patentMatch[1]), {
+        signal: contextRequest.signal,
+      })
         .then((patent) => {
-          setPatents([patent]);
-          setMessages([welcomeMessage([patent], patent.pn ?? "")]);
+          setPatentIds([patent.id]);
+          setMessages([welcomeMessage(1, patent.pn ?? "", patent)]);
         })
-        .finally(() => setLoadingContext(false));
+        .catch((error) => {
+          if (!(error instanceof ApiCancelledError)) {
+            setMessages([welcomeMessage(0, "")]);
+          }
+        })
+        .finally(() => {
+          if (!contextRequest.signal.aborted) setLoadingContext(false);
+        });
     } else if (pathname === "/" && query) {
-      const cached = sessionStorage.getItem("chat_context_patents");
-      const cachedQuery = sessionStorage.getItem("chat_context_query");
-      if (cached && cachedQuery === query) {
-        const data = JSON.parse(cached);
-        setPatents(data);
-        setMessages([welcomeMessage(data, query)]);
+      const cached = readChatContext(sessionStorage, query);
+      if (cached) {
+        setPatentIds(cached.patentIds);
+        setMessages([welcomeMessage(cached.patentIds.length, query)]);
       } else {
-        setMessages([welcomeMessage([], query)]);
+        setMessages([welcomeMessage(0, query)]);
       }
     } else {
-      setMessages([welcomeMessage([], "")]);
+      setMessages([welcomeMessage(0, "")]);
     }
+    return () => contextRequest.abort();
   }, [pathname, searchParams, open]);
+
+  useEffect(() => {
+    return () => activeChatRequest.current?.abort();
+  }, [pathname, open]);
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -103,24 +150,20 @@ export default function FloatingChat() {
     setMessages(newHistory);
     setInput("");
     setLoading(true);
+    activeChatRequest.current?.abort();
+    const request = new AbortController();
+    activeChatRequest.current = request;
 
     try {
-      const res = await fetch(`${API_URL}/chat/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          history: messages.slice(1),
-          patents_context: patents,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail ?? `Error ${res.status}`);
-      }
-      const data = await res.json();
-      setMessages([...newHistory, { role: "model", content: data.reply }]);
+      const reply = await sendChat(
+        text,
+        buildChatHistory(messages.slice(1)),
+        patentIds,
+        { signal: request.signal }
+      );
+      setMessages([...newHistory, { role: "model", content: reply }]);
     } catch (err) {
+      if (err instanceof ApiCancelledError) return;
       const msg = err instanceof Error ? err.message : "Error desconocido";
       console.error("[FloatingChat]", msg);
       setMessages([
@@ -128,7 +171,10 @@ export default function FloatingChat() {
         { role: "model", content: `⚠️ ${msg}` },
       ]);
     } finally {
-      setLoading(false);
+      if (activeChatRequest.current === request) {
+        activeChatRequest.current = null;
+        setLoading(false);
+      }
     }
   }
 
@@ -151,9 +197,9 @@ export default function FloatingChat() {
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4" />
               <span className="font-semibold text-sm">PatentBot</span>
-              {patents.length > 0 && (
+              {patentIds.length > 0 && (
                 <span className="px-2 py-0.5 bg-white/20 rounded-full text-xs">
-                  {patents.length} {patents.length === 1 ? "patente" : "patentes"}
+                  {patentIds.length} {patentIds.length === 1 ? "patente" : "patentes"}
                 </span>
               )}
             </div>
@@ -190,19 +236,7 @@ export default function FloatingChat() {
                           ol: ({ children }) => <ol className="list-decimal pl-4 space-y-0.5">{children}</ol>,
                           li: ({ children }) => <li>{children}</li>,
                           code: ({ children }) => <code className="bg-gray-200 px-1 rounded text-xs font-mono">{children}</code>,
-                          a: ({ href, children }) =>
-                            href?.startsWith("/patentes/") ? (
-                              <Link
-                                href={href}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary-100 text-primary-700 rounded-md font-mono text-xs font-medium hover:bg-primary-200 transition-colors"
-                              >
-                                {children}
-                              </Link>
-                            ) : (
-                              <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-primary-600 hover:text-primary-800">
-                                {children}
-                              </a>
-                            ),
+                          a: ChatLink,
                         }}
                       >
                         {msg.content}
@@ -244,6 +278,7 @@ export default function FloatingChat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Pregunta sobre estas patentes..."
+              maxLength={2000}
               rows={1}
               className="flex-1 resize-none rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-transparent bg-gray-50 placeholder-gray-400"
               style={{ maxHeight: "80px" }}

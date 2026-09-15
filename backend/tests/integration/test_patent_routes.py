@@ -9,9 +9,14 @@ agregando los casos que faltan para cumplir la rúbrica:
 Usa el fixture `client` de conftest.py (TestClient con get_supabase mockeado).
 """
 
-import pytest
+import logging
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi.testclient import TestClient
+
+from app.dependencies import get_patent_service
+from app.main import app
 
 # ===========================================================================
 # GET / — health check
@@ -37,6 +42,17 @@ class TestHealthCheck:
 
 class TestListPatentes:
 
+    def test_request_log_uses_route_template_and_excludes_query(self, client, caplog):
+        sensitive_query = "prompt-secreto-claim-privado"
+
+        with caplog.at_level(logging.INFO, logger="app.errors"):
+            response = client.get("/patentes/", params={"q": sensitive_query})
+
+        assert response.status_code == 200
+        assert '"event": "request_completed"' in caplog.text
+        assert '"route": "/patentes/"' in caplog.text
+        assert sensitive_query not in caplog.text
+
     # --- Test existente en tests/db-patents (se conserva sin modificar) ---
     def test_list_patents_happy_path(self, client, mock_supabase):
         """Happy path: respuesta paginada con estructura correcta."""
@@ -44,11 +60,9 @@ class TestListPatentes:
             {"id": 1, "pn": "US123", "ti": "Invento 1"},
             {"id": 2, "pn": "US456", "ti": "Invento 2"},
         ]
-        count_response = MagicMock(count=2)
-        data_response = MagicMock(data=fake_rows)
+        data_response = MagicMock(data=fake_rows, count=2)
 
         table = mock_supabase.table.return_value
-        table.select.return_value.execute.return_value = count_response
         (table.select.return_value
               .order.return_value
               .range.return_value
@@ -67,11 +81,10 @@ class TestListPatentes:
     def test_list_patentes_tabla_vacia_devuelve_data_vacia(self, client, mock_supabase):
         """Flujo alternativo: tabla vacía → 200 con data=[] y count=0."""
         table = mock_supabase.table.return_value
-        table.select.return_value.execute.return_value = MagicMock(count=0)
         (table.select.return_value
               .order.return_value
               .range.return_value
-              .execute.return_value) = MagicMock(data=[])
+              .execute.return_value) = MagicMock(data=[], count=0)
 
         response = client.get("/patentes/")
 
@@ -109,8 +122,17 @@ class TestListPatentes:
 
 class TestBuscarPatentes:
 
-    def test_busqueda_con_q_retorna_200_con_estructura_paginada(self, client):
+    @staticmethod
+    def configure_search_response(mock_supabase, data=None, count=0):
+        mock_supabase.rpc.return_value.execute.return_value = MagicMock(
+            data={"data": data or [], "count": count}
+        )
+
+    def test_busqueda_con_q_retorna_200_con_estructura_paginada(
+        self, client, mock_supabase
+    ):
         """Happy path: ?q=motor → 200 con estructura data/count/page/page_size."""
+        self.configure_search_response(mock_supabase, [{"id": 1, "pn": "US123"}], 1)
         response = client.get("/patentes/?q=motor")
 
         assert response.status_code == 200
@@ -120,15 +142,7 @@ class TestBuscarPatentes:
 
     def test_busqueda_sin_coincidencias_retorna_lista_vacia(self, client, mock_supabase):
         """Flujo alternativo: query sin matches → data=[] y count=0, no error."""
-        table = mock_supabase.table.return_value
-        (table.select.return_value
-              .or_.return_value
-              .execute.return_value) = MagicMock(count=0)
-        (table.select.return_value
-              .or_.return_value
-              .order.return_value
-              .range.return_value
-              .execute.return_value) = MagicMock(data=[])
+        self.configure_search_response(mock_supabase)
 
         response = client.get("/patentes/?q=xyzterminoinexistente")
 
@@ -145,15 +159,37 @@ class TestBuscarPatentes:
         response = client.get("/patentes/?q=")
         assert response.status_code == 422
 
+    def test_busqueda_con_q_solo_espacios_retorna_422(self, client):
+        response = client.get("/patentes/", params={"q": "   "})
+        assert response.status_code == 422
+
+    def test_busqueda_con_q_mayor_a_200_caracteres_retorna_422(self, client):
+        response = client.get("/patentes/", params={"q": "a" * 201})
+        assert response.status_code == 422
+
     @pytest.mark.parametrize("query", [
         "US10123456B2",
         "vehículo autónomo",
         "B60W60/00",
     ])
-    def test_busqueda_acepta_distintos_formatos_de_query(self, client, query):
+    def test_busqueda_acepta_distintos_formatos_de_query(
+        self, client, mock_supabase, query
+    ):
         """Escenarios: distintos formatos de query → 200, sin error de servidor."""
-        response = client.get(f"/patentes/?q={query}")
+        self.configure_search_response(mock_supabase)
+        response = client.get("/patentes/", params={"q": query})
         assert response.status_code == 200
+
+    @pytest.mark.parametrize("query", ["),id.gt.0", "100%_eléctrico", "a,b(c)"])
+    def test_busqueda_adversarial_se_envia_como_valor(
+        self, client, mock_supabase, query
+    ):
+        self.configure_search_response(mock_supabase)
+
+        response = client.get("/patentes/", params={"q": query})
+
+        assert response.status_code == 200
+        assert mock_supabase.rpc.call_args.args[1]["query_text"] == query
 
 
 # ===========================================================================
@@ -179,7 +215,7 @@ class TestGetPatente:
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
-             .single.return_value
+             .maybe_single.return_value
              .execute.return_value) = MagicMock(data=None)
 
         response = client.get("/patentes/99999")
@@ -197,9 +233,27 @@ class TestGetPatente:
         (mock_supabase.table.return_value
              .select.return_value
              .eq.return_value
-             .single.return_value
+             .maybe_single.return_value
              .execute.return_value) = MagicMock(data=None)
 
         detail = client.get("/patentes/0").json()["detail"]
         assert isinstance(detail, str)
         assert len(detail) > 0
+
+    def test_get_patente_fallo_de_infraestructura_retorna_500_correlacionado(self):
+        class FailingService:
+            def get_by_id(self, patent_id: int):
+                raise ConnectionError("internal-host.example secret-token")
+
+        app.dependency_overrides[get_patent_service] = FailingService
+        try:
+            with TestClient(app, raise_server_exceptions=False) as error_client:
+                response = error_client.get("/patentes/1")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 500
+        assert response.json()["code"] == "INTERNAL_ERROR"
+        assert response.json()["correlation_id"] == response.headers["x-correlation-id"]
+        assert "internal-host" not in response.text
+        assert "secret-token" not in response.text
