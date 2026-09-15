@@ -9,7 +9,7 @@ _classification_service: ClassificationService | None = None
 
 
 def get_supabase() -> Client:
-    return create_client(settings.supabase_url, settings.supabase_key)
+    return create_client(settings.supabase_url, settings.supabase_anon_key)
 
 
 def get_patent_service(client: Client = Depends(get_supabase)) -> PatentService:

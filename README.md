@@ -42,7 +42,7 @@ flowchart LR
 ## Estructura del repositorio
 
 ```text
-Proyecto-patentes/
+NextInventia/
 ├── backend/
 │   ├── app/
 │   │   ├── models/              # Contratos Pydantic
@@ -50,7 +50,6 @@ Proyecto-patentes/
 │   │   └── services/            # Patentes, embeddings y clasificación CPC
 │   ├── data/cpc_index/          # Catálogo e índice CPC local (ignorado por Git)
 │   ├── exel/                    # Scripts offline de datos e indexación
-│   ├── migrations/              # Migraciones SQL para Supabase
 │   ├── tests/                   # Pruebas unitarias y de integración
 │   ├── requirements.txt
 │   └── requirements-dev.txt
@@ -59,6 +58,10 @@ Proyecto-patentes/
 │   ├── src/app/                 # Rutas de Next.js
 │   ├── src/components/          # Componentes React
 │   └── src/lib/api.ts           # Cliente y tipos de la API
+├── supabase/
+│   ├── config.toml              # Configuración del proyecto para el Supabase CLI
+│   └── migrations/              # Migraciones SQL (<timestamp>_<nombre>.sql)
+├── package.json                 # Tooling de repositorio: Supabase CLI
 └── README.md
 ```
 
@@ -117,7 +120,8 @@ Cree `backend/.env`:
 
 ```dotenv
 SUPABASE_URL=https://TU_PROYECTO.supabase.co
-SUPABASE_KEY=TU_CLAVE_DE_SUPABASE
+SUPABASE_ANON_KEY=TU_CLAVE_ANON_DE_SUPABASE
+SUPABASE_SERVICE_ROLE_KEY=TU_CLAVE_SERVICE_ROLE_DE_SUPABASE
 GEMINI_API_KEY=TU_CLAVE_DE_GEMINI
 
 # Origen exacto del frontend principal.
@@ -129,9 +133,13 @@ ALLOW_LOCAL_NETWORK_ORIGINS=true
 
 Notas:
 
-- El backend actualmente requiere las claves de Supabase y Gemini al iniciar.
-- Para scripts de carga administrativa use una clave de Supabase con permisos
-  suficientes. No exponga una `service_role` en el frontend ni en Git.
+- El backend actualmente requiere `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `GEMINI_API_KEY` al iniciar.
+- El backend de producción (`app/dependencies.py`) solo lee con `SUPABASE_ANON_KEY` — nunca
+  necesita `service_role`.
+- Los scripts de carga administrativa en `backend/exel/` (`upload_to_supabase.py`,
+  `generate_embeddings.py`, `cluster_patentes.py`) escriben en la base de datos y por eso
+  usan `SUPABASE_SERVICE_ROLE_KEY`, que bypassa RLS. No exponga esta clave en el frontend
+  ni en Git.
 - Los archivos `.env` están ignorados por Git.
 
 ### 4. Preparar el índice CPC
@@ -241,20 +249,71 @@ Las migraciones añaden o utilizan, entre otros:
 apc, pd, ww, lg_st, embedding, cluster_id, search_vector
 ```
 
-Ejecute en el SQL Editor de Supabase, en este orden:
+Las migraciones viven en `supabase/migrations/` y se gestionan con el **Supabase CLI**
+(no se pegan a mano en el SQL Editor). En orden:
 
-1. `backend/migrations/001_enable_extensions_and_columns.sql`
-2. `backend/migrations/002_hybrid_search_function.sql`
-3. `backend/migrations/003_new_columns_and_unique_pn.sql`
+1. `20260714092052_enable_extensions_and_columns.sql`
+2. `20260714092053_hybrid_search_function.sql`
+3. `20260714092054_new_columns_and_unique_pn.sql`
+4. `20260906173200_rls_policies.sql`
 
-Las migraciones habilitan:
+Habilitan:
 
 - extensiones `vector` y `pg_trgm`;
 - vector de búsqueda FTS ponderado;
 - columna `embedding vector(384)`;
 - índice HNSW por distancia coseno;
 - funciones RPC `search_patentes_hybrid` y `patentes_similares`;
-- columnas de los exports actuales y unicidad sobre `pn`.
+- columnas de los exports actuales y unicidad sobre `pn`;
+- Row Level Security en `patentes`: `anon` (la key que usa el backend de producción)
+  solo puede hacer `SELECT`. Toda la escritura (`backend/exel/*.py`) usa
+  `SUPABASE_SERVICE_ROLE_KEY`, que bypassa RLS por diseño.
+
+## Flujo de migraciones (Supabase CLI)
+
+> ⚠️ **Ya no se pega SQL manualmente en el SQL Editor del dashboard.** Hacerlo deja el
+> historial de migraciones desincronizado entre el repositorio y la base de datos.
+
+El CLI está fijado como dependencia de desarrollo en el `package.json` de la raíz.
+
+### Configuración inicial (una sola vez por desarrollador)
+
+```bash
+# Desde la raíz del repositorio
+npm install                       # instala el Supabase CLI fijado en package.json
+npx supabase login                # abre el navegador para autenticarse
+npx supabase link --project-ref uzwocpslyjbgtugstdmo
+```
+
+`link` pide la contraseña de Postgres del proyecto (Project Settings → Database).
+
+### Crear y aplicar una migración nueva
+
+```bash
+npm run db:new -- nombre_descriptivo   # crea supabase/migrations/<timestamp>_nombre_descriptivo.sql
+# ...editar el archivo SQL generado...
+
+npm run db:diff                        # dry-run: muestra qué se aplicaría, sin aplicar nada
+npm run db:push                        # aplica las migraciones pendientes a la base remota
+```
+
+### Comprobar el estado
+
+```bash
+npm run db:list    # compara historial local vs remoto y muestra dónde divergen
+```
+
+### Advertencias
+
+- **Nunca** corra `supabase db reset --linked`: borra y recrea la base de datos **remota**.
+  `db reset` sin `--linked` solo afecta la base local de Docker.
+- Los archivos de migración deben seguir el patrón `<timestamp>_<nombre>.sql`
+  (`YYYYMMDDhhmmss`). El CLI compara **solo por timestamp**; un archivo con otro formato
+  de nombre es ignorado. Use siempre `npm run db:new` para crearlos.
+- Las 4 migraciones iniciales se aplicaron manualmente antes de adoptar el CLI, y se
+  marcaron como ya aplicadas con `supabase migration repair --linked --status applied`
+  (ese comando solo escribe en la tabla de historial `supabase_migrations.schema_migrations`;
+  no ejecuta SQL ni modifica el esquema).
 
 ## Carga opcional de patentes
 

@@ -34,7 +34,12 @@ BACKEND_DIR = SCRIPT_DIR.parent
 load_dotenv(BACKEND_DIR / ".env")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+if not SUPABASE_SERVICE_ROLE_KEY:
+    raise RuntimeError(
+        "Falta SUPABASE_SERVICE_ROLE_KEY en .env — este script requiere la "
+        "service_role key, no la anon key."
+    )
 TABLE = "patentes"
 
 K = int(os.getenv("KMEANS_K", "20"))
@@ -192,7 +197,7 @@ def print_summary(ids: list[int], labels: np.ndarray, titles: dict[int, str], k:
 
 def main() -> None:
     print(f"Conectando a Supabase y descargando embeddings...")
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     ids, X, titles = fetch_all_embeddings(client)
     n = len(ids)

@@ -224,7 +224,7 @@ Errores relevantes:
 
 ## Ejecución y pruebas
 
-El backend necesita `SUPABASE_URL`, `SUPABASE_KEY` y `GEMINI_API_KEY` en `.env`
+El backend necesita `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `GEMINI_API_KEY` en `.env`
 aunque la recuperación CPC no consulte Supabase.
 
 ```powershell
