@@ -52,3 +52,6 @@ backend/exel/*.xlsx
 backend/exel/*.csv
 # Catalogo CPC completo e indice vectorial local
 backend/data/cpc_index/
+
+# Dependencias de Node (tooling de repositorio y frontend)
+node_modules/

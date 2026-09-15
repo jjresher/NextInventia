@@ -31,7 +31,7 @@ Do not activate SDD automatically for ordinary ideas, questions, reviews, or imp
 - `frontend/`: Next.js 16, React 19, TypeScript, Tailwind CSS 4; package manager: npm.
 - `backend/`: FastAPI, Pydantic, Supabase, Gemini, and CPC retrieval; Python dependencies use pip requirements files.
 - `backend/tests/`: backend unit and integration tests with fake external clients.
-- `backend/migrations/`: SQL changes that extend a pre-existing database schema.
+- `supabase/migrations/`: SQL changes that extend a pre-existing database schema, applied with the Supabase CLI.
 - `backend/exel/`: offline import and ML data jobs; the directory name is historical.
 - `backend/data/cpc_index/`: large local CPC artifacts excluded from Git.
 

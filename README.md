@@ -310,14 +310,16 @@ Las migraciones añaden o utilizan, entre otros:
 apc, pd, ww, lg_st, embedding, cluster_id, search_vector
 ```
 
-Ejecute en el SQL Editor de Supabase, en este orden:
+Sobre una base nueva se aplican con el Supabase CLI (vea *Flujo de migraciones*
+más abajo), en el orden que fija su timestamp:
 
-1. `backend/migrations/001_enable_extensions_and_columns.sql`
-2. `backend/migrations/002_hybrid_search_function.sql`
-3. `backend/migrations/003_new_columns_and_unique_pn.sql`
-4. `backend/migrations/004_parameterized_lexical_search.sql`
+1. `supabase/migrations/20260714092052_enable_extensions_and_columns.sql`
+2. `supabase/migrations/20260714092053_hybrid_search_function.sql`
+3. `supabase/migrations/20260714092054_new_columns_and_unique_pn.sql`
+4. `supabase/migrations/20260714092055_parameterized_lexical_search.sql`
+5. `supabase/migrations/20260906173200_rls_policies.sql`
 
-La migración 003 elimina filas con `pn` duplicado y conserva la de mayor `id`
+La migración `20260714092054` (antes `003`) elimina filas con `pn` duplicado y conserva la de mayor `id`
 antes de crear la restricción única. Revise los duplicados y respalde los datos
 antes de aplicarla a una base existente.
 
@@ -329,6 +331,48 @@ Las migraciones habilitan:
 - índice HNSW por distancia coseno;
 - funciones RPC `search_patentes_hybrid` y `patentes_similares`;
 - columnas de los exports actuales y unicidad sobre `pn`.
+
+### Flujo de migraciones (Supabase CLI)
+
+Las migraciones viven en `supabase/migrations/` y se aplican con el Supabase CLI,
+fijado como dependencia de desarrollo del repositorio. Desde la raíz:
+
+```bash
+npm install
+npx supabase login
+npx supabase link --project-ref <PROJECT_REF>
+```
+
+El `link` pide la contraseña de la base de datos y guarda el enlace en
+`supabase/.temp/`, que no se versiona.
+
+| Script | Qué hace |
+|---|---|
+| `npm run db:list` | Compara el historial local con el remoto. |
+| `npm run db:diff` | `db push --dry-run`: muestra qué se aplicaría, sin aplicarlo. |
+| `npm run db:push` | Aplica al remoto las migraciones pendientes. |
+| `npm run db:new <nombre>` | Crea un archivo nuevo con el timestamp correcto. |
+
+El nombre debe seguir `<YYYYMMDDhhmmss>_<nombre>.sql`. El CLI decide qué está
+pendiente comparando **solo el timestamp** contra la tabla
+`supabase_migrations.schema_migrations` del remoto: no mira el contenido, así que
+editar un archivo ya aplicado no vuelve a ejecutarlo, y renombrarlo lo convierte
+en una migración nueva.
+
+Las cinco migraciones existentes se marcaron como aplicadas sin ejecutar su SQL,
+porque el remoto ya tenía ese estado:
+
+```bash
+npx supabase migration repair --status applied <VERSION>
+```
+
+Advertencias:
+
+- No ejecute `npx supabase db reset --linked` contra el proyecto remoto: borra y
+  reconstruye la base.
+- Revise siempre `npm run db:diff` antes de `npm run db:push`.
+- La migración `20260714092054` (antes `003`) elimina filas con `pn` duplicado.
+  Sobre una base con datos, respalde antes de aplicarla; vea el issue #25.
 
 ## Carga opcional de patentes
 
@@ -355,7 +399,7 @@ patente, limpieza de HTML, deduplicación y verificación de round trip.
 
 ### 2. Subir nuevas patentes
 
-Requiere la migración 003:
+Requiere la migración `20260714092054` (antes `003`):
 
 ```powershell
 python -m exel.upload_to_supabase
