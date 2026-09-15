@@ -1,310 +1,206 @@
-# Auditoría técnica, de arquitectura y seguridad
+# Auditoría técnica de seguimiento — Patentólogos
 
-**Proyecto:** Patentólogos  
-**Fecha:** 2026-09-02  
-**Tipo de revisión:** análisis estático del repositorio y auditoría de dependencias del frontend  
-**Alcance:** `backend/app`, `backend/exel`, `backend/migrations`, `backend/tests`, `frontend/src`, manifiestos, archivos de configuración y documentación.
+**Fecha:** 14 de septiembre de 2026
+
+**Rama revisada:** `develop`
+
+**Commit:** `edd0b5b6c77910eebf758bae19f233aa79338b99`
+
+**Alcance:** arquitectura, calidad, seguridad, privacidad, datos, rendimiento, pruebas y preparación operativa del frontend Next.js y el backend FastAPI.
+
+**Naturaleza:** revisión estática y pruebas locales; no se modificó código ni se ejecutaron migraciones o servicios remotos.
 
 ## 1. Resumen ejecutivo
 
-El proyecto tiene una base clara y razonablemente modular: separa rutas, modelos y servicios en FastAPI; usa modelos Pydantic; limita varios parámetros; no contiene secretos versionados detectables; evita renderizar HTML crudo; y cuenta con pruebas unitarias e integrales del backend. La validación del índice CPC, el uso de `allow_pickle=False` y la comprobación de que Gemini solo seleccione códigos recuperados son decisiones especialmente acertadas.
+El proyecto mejoró de forma importante desde la auditoría del 2 de septiembre. El chat ya reconstruye el contexto desde IDs, los inputs costosos tienen límites en FastAPI, las dependencias Python son reproducibles, la búsqueda léxica está parametrizada, los errores públicos están redactados, existen timeouts, caché, contratos OpenAPI, observabilidad y CI. La base arquitectónica del MVP es ahora considerablemente más mantenible y verificable.
 
-Sin embargo, **no se recomienda exponer la aplicación a Internet en su estado actual**. Los principales riesgos son:
+De los 33 hallazgos originales:
 
-1. La versión fijada de Next.js (`16.1.7`) tiene vulnerabilidades conocidas de severidad alta, incluyendo variantes de denegación de servicio, SSRF y bypass de middleware/proxy.
-2. Los endpoints que consumen CPU, memoria, base de datos y cuota de Gemini son públicos y no tienen autenticación, rate limiting, cuotas, límites de concurrencia ni protección frente a abuso.
-3. Las funciones RPC de Supabase están concedidas directamente al rol `anon`, y sus parámetros costosos no se acotan dentro de PostgreSQL. Un cliente puede omitir el backend y solicitar pools arbitrariamente grandes.
-4. El chat acepta historial y supuestos datos de patentes enviados por el navegador sin revalidarlos contra la base de datos. Esto permite falsificar contexto, amplificar prompts y consumir cuota.
-5. Las dependencias Python de producción no están fijadas ni existe un lockfile reproducible. Una instalación futura puede cambiar o romperse sin que cambie el repositorio.
-6. El producto envía descripciones de invenciones, conversaciones y contenido de patentes a Gemini sin una capa visible de consentimiento, clasificación de datos o política de retención. Esto puede ser crítico si el usuario introduce material confidencial o aún no publicado.
+| Estado actual | Cantidad | Interpretación |
+| --- | ---: | --- |
+| Corregidos | 25 | La causa principal está resuelta y existe evidencia en código o pruebas. |
+| Mitigado parcialmente | 1 | Hay controles, pero falta completar su activación en producción. |
+| Pendientes | 7 | Siguen representados por los issues abiertos #12, #13, #14, #17, #24 y #25. |
 
-### Distribución de hallazgos
+El riesgo residual más importante no está en la organización del código, sino en publicar operaciones costosas sin identidad, cuotas y control global de concurrencia. También permanecen abiertos el acceso directo a RPC, el tratamiento de información enviada a Gemini y la reproducibilidad/seguridad del esquema de base de datos.
 
-| Severidad | Cantidad |
-|---|---:|
-| Crítica | 0 |
-| Alta | 6 |
-| Media | 15 |
-| Baja | 12 |
-| Total | 33 |
+**Conclusión de despliegue:** el sistema está en buen estado para desarrollo local y pruebas controladas. Antes de abrirlo a usuarios reales en Internet conviene resolver, como mínimo, #12, #13, #14 y #17. #24 y #25 deben quedar resueltos antes de depender del entorno como un servicio recuperable y repetible.
 
-> La severidad expresa el riesgo potencial bajo un despliegue público. Algunos hallazgos pueden reducirse si la aplicación solo se ejecuta en una red local confiable, si Supabase tiene políticas RLS no incluidas en este repositorio o si existen controles externos en el proxy/plataforma.
+## 2. Estado de los riesgos pendientes
 
-## 2. Metodología y limitaciones
+### R-01 — Operaciones costosas públicas y sin control antiabuso distribuido
 
-Se revisaron manualmente los flujos de entrada, acceso a Supabase, generación con Gemini, embeddings, carga del índice CPC, renderizado y navegación. También se inspeccionó el historial inmediato de Git, archivos rastreados, patrones de secretos y cobertura temática de las pruebas.
+**Severidad:** alta · **Issues:** #12 y #13 · **Hallazgos originales:** A-02, M-05 y M-06
 
-Se ejecutó `npm audit --omit=dev --json` contra `frontend/package-lock.json`. El resultado fue **4 paquetes de producción vulnerables, todos reportados con severidad alta**: `next`, `nanoid`, `postcss` y `sharp`. No se aplicó ningún arreglo automático.
+**Estado:** pendiente; el código confirma que el riesgo sigue vigente.
 
-No se ejecutaron la aplicación, migraciones, scripts de datos, llamadas a Supabase/Gemini, pruebas, linters ni builds. Tampoco se realizó pentesting dinámico. Las políticas RLS, grants preexistentes, configuración real de hosting, WAF, secretos y observabilidad externa no están presentes en el repositorio y deben auditarse por separado.
+Las rutas de chat, búsqueda semántica y clasificación no exigen identidad ni aplican cuotas por usuario/IP (`backend/app/routes/chat.py:139`, `backend/app/routes/patents.py:31`, `backend/app/routes/classification.py:11`). Cada petición puede consumir Gemini, cargar/usar Sentence-BERT, consultar Supabase y recorrer el índice CPC.
 
-## 3. Hallazgos de severidad alta
+El limitador de Gemini es seguro entre threads de un único proceso, pero su estado vive en memoria y no se comparte entre workers o réplicas (`backend/app/services/gemini_client.py`). Además, reserva cuota antes de la llamada y una petición fallida continúa contabilizada. No existe semáforo/cola acotada para inferencia, clasificación o llamadas al proveedor.
 
-### A-01 — Next.js 16.1.7 contiene vulnerabilidades conocidas
+El timeout global mejora la respuesta al cliente, pero `asyncio.wait_for` no garantiza detener trabajo síncrono que ya está ejecutándose en el thread pool (`backend/app/errors.py:40-55`). Por eso el timeout no sustituye backpressure ni control de concurrencia.
 
-**Evidencia:** `frontend/package.json:13`, `frontend/package-lock.json` (`next@16.1.7`).  
-**Impacto:** según el resultado local de npm, esta versión cae dentro de rangos afectados por múltiples avisos, incluidos DoS de React Server Components, bypass de middleware/proxy, SSRF y problemas de caché. No todos son necesariamente explotables con la configuración actual, pero los DoS sobre App Router/RSC sí son relevantes para este proyecto. `postcss@8.5.8`, `sharp@0.34.5` y `nanoid@3.3.11` también aparecen afectados de forma transitiva.  
-**Recomendación:** actualizar Next.js a una versión estable corregida compatible —el audit propone `16.3.4` al momento de esta revisión—, regenerar el lockfile de forma controlada y validar con build, lint, pruebas y smoke tests. Revisar cada advisory para confirmar aplicabilidad antes del despliegue:
+**Recomendación:** aprobar primero el modelo de acceso de #12 y después implementar #13 con identidad verificable, rate limiting compartido, cuota global, límites por identidad, semáforos/cola acotada, `429` y `Retry-After`. Mantener separados los endpoints ligeros para que la saturación no afecte health checks o lecturas simples.
 
-- [GHSA-q4gf-8mx6-v5v3](https://github.com/advisories/GHSA-q4gf-8mx6-v5v3)
-- [GHSA-8h8q-6873-q5fj](https://github.com/advisories/GHSA-8h8q-6873-q5fj)
-- [GHSA-c4j6-fc7j-m34r](https://github.com/advisories/GHSA-c4j6-fc7j-m34r)
-- [GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj)
-- [GHSA-r28c-9q8g-f849](https://github.com/advisories/GHSA-r28c-9q8g-f849)
+### R-02 — RPC de búsqueda accesibles por `anon` y con límites eludibles
 
-### A-02 — Endpoints costosos públicos y sin controles antiabuso
+**Severidad:** alta · **Issue:** #14 · **Hallazgo original:** A-03
 
-**Evidencia:** no hay dependencias de autenticación en `backend/app/routes/chat.py:99-100`, `classification.py:10-16` ni `patents.py:31-43`; tampoco hay middleware de rate limiting en `backend/app/main.py:17-31`.  
-**Impacto:** cualquier origen o cliente HTTP puede invocar directamente Gemini, el modelo de embeddings, el escaneo matricial de aproximadamente 400 MB y consultas vectoriales. CORS no impide llamadas desde scripts, servidores o clientes no navegador. Esto permite agotar cuota, CPU, RAM, workers, conexiones y presupuesto. El rate limiter de `GeminiFallbackClient` protege parcialmente la cuota por proceso, pero no limita usuarios, tamaño total, concurrencia ni múltiples réplicas.  
-**Recomendación:** definir el modelo de acceso (privado, cuentas o API keys), autenticar operaciones costosas, implementar límites por identidad/IP y globales, cuotas diarias, límites de concurrencia, backpressure y respuestas `429` con `Retry-After`. Complementar con límites en gateway/WAF; no depender exclusivamente de controles en memoria.
+**Estado:** pendiente.
 
-### A-03 — RPCs costosos expuestos directamente al rol anónimo
+`search_patentes_hybrid` y `patentes_similares` conceden `EXECUTE` a `anon` (`backend/migrations/002_hybrid_search_function.sql:115-116`, `:153-154`). Sus parámetros `candidate_pool`, `top_k` y `rrf_k` no se acotan dentro de PostgreSQL (`:28-33`, `:73`, `:85`, `:95-111`). Un cliente puede saltarse la validación de FastAPI y provocar consultas mucho más costosas o errores deliberados.
 
-**Evidencia:** `backend/migrations/002_hybrid_search_function.sql:114-116` y `153-154` conceden `EXECUTE` a `anon`. `search_patentes_hybrid` acepta `top_k`, `candidate_pool` y `rrf_k` sin validación interna (`:28-33`) y los usa en `LIMIT` y en el cálculo (`:62-111`).  
-**Impacto:** quien obtenga la anon key pública del proyecto puede saltarse los límites Pydantic del backend y llamar el RPC directamente con un `candidate_pool` o `top_k` enorme, generando consumo elevado de CPU/I/O y respuestas voluminosas. También puede suministrar vectores arbitrarios. Las garantías dependen de grants/RLS externos no documentados.  
-**Recomendación:** revocar `EXECUTE` a `anon` si el acceso debe pasar por el backend. Si el RPC debe ser público, fijar límites dentro de SQL mediante `LEAST/GREATEST`, rechazar dimensiones/valores inválidos, aplicar `statement_timeout`, cuotas y controles de gateway. Auditar explícitamente `GRANT` de tabla, RLS y políticas; versionarlos como migraciones.
+La RPC léxica nueva sí acota query, página y tamaño, y fija un `search_path` seguro (`backend/migrations/004_parameterized_lexical_search.sql:13-43`), pero también concede ejecución directa a `anon` (`:57-58`). Su política de acceso debe revisarse junto con las demás RPC después de decidir #12.
 
-### A-04 — El chat confía en contexto e historial controlados por el cliente
+**Recomendación:** versionar revocaciones y grants mínimos; aplicar límites SQL independientes de FastAPI; cualificar objetos y fijar `search_path`; añadir `statement_timeout`; probar roles autorizados y no autorizados en una base efímera. Incluir las tres RPC en el inventario de #14.
 
-**Evidencia:** `ChatRequest` acepta `history: list[Message]` y `patents_context: list[dict]` (`backend/app/routes/chat.py:40-48`). El servidor incorpora ese contenido directamente al prompt de sistema (`:55-96`, `:101-116`). El navegador lo recupera de `sessionStorage` y lo reenvía (`frontend/src/components/FloatingChat.tsx:78-84`, `:108-115`).  
-**Impacto:** un atacante puede falsificar títulos, claims, IDs y números de patente; insertar instrucciones dentro del supuesto corpus; inventar turnos del modelo; o enviar estructuras y textos muy grandes. La respuesta puede presentar datos falsos como si provinieran del catálogo y generar enlaces internos engañosos. Además, aumenta el costo por tokens y riesgo de denegación de servicio.  
-**Recomendación:** aceptar únicamente IDs y mensajes del usuario; rehidratar las patentes en el servidor desde una fuente autorizada; usar roles con `Literal`; limitar cantidad y longitud acumulada del historial; truncar por tokens; separar claramente instrucciones y datos no confiables; y advertir que el contenido recuperado puede contener prompt injection. Para conversaciones persistentes, almacenar el historial del lado servidor y asociarlo a una identidad/sesión.
+### R-03 — Información potencialmente confidencial enviada a Gemini sin política visible
 
-### A-05 — Cadena de suministro Python no reproducible
+**Severidad:** alta · **Issue:** #17 · **Hallazgo original:** A-06
 
-**Evidencia:** todas las dependencias de producción en `backend/requirements.txt` carecen de versión o hash. `requirements-dev.txt` solo fija herramientas de prueba y hereda ese archivo. No existe `pyproject.toml`, lockfile Python ni política automatizada de actualizaciones.  
-**Impacto:** dos despliegues desde el mismo commit pueden instalar versiones distintas; una versión mayor incompatible o comprometida puede entrar sin revisión; y no es posible asociar con precisión el artefacto desplegado a sus CVE. Dependencias pesadas como PyTorch/Transformers llegan transitivamente sin control directo.  
-**Recomendación:** declarar rangos directos deliberados y generar un lock con hashes por plataforma (por ejemplo, `uv.lock` o `pip-tools`). Separar runtime, ML, scripts offline y desarrollo. Incorporar `pip-audit`/OSV y actualización automatizada en CI, manteniendo pruebas de compatibilidad.
+**Estado:** pendiente.
 
-### A-06 — Riesgo de confidencialidad al enviar invenciones a un tercero
+El chat envía a Gemini el mensaje, historial y contexto rehidratado de patentes (`backend/app/routes/chat.py:145-172`). La clasificación envía la descripción técnica introducida por el usuario (`backend/app/services/classification_service.py`). El frontend no presenta aviso específico, consentimiento, categorías prohibidas ni una alternativa claramente identificada que no envíe contenido al proveedor.
 
-**Evidencia:** la descripción ingresada en el clasificador se incluye completa en el prompt de Gemini (`backend/app/services/classification_service.py:223-247`). El chat envía mensaje, historial, abstracts, descripción y claims (`backend/app/routes/chat.py:55-119`). La UI solo muestra una advertencia general de revisión técnica, no una advertencia de tratamiento de datos antes del envío.  
-**Impacto:** un usuario puede pegar una invención aún no presentada, secretos empresariales o información personal. El contenido sale hacia un proveedor externo, con posibles consecuencias contractuales, de privacidad y de novedad/divulgación según jurisdicción y condiciones de servicio.  
-**Recomendación:** realizar una evaluación legal y de privacidad; documentar proveedor, finalidad, región, retención y entrenamiento; obtener consentimiento informado antes del envío; prohibir o detectar datos sensibles; minimizar/redactar contenido; ofrecer un modo local sin Gemini; y registrar la base legal y el flujo de datos. No guardar prompts completos en logs.
+La redacción de logs redujo el riesgo interno: no se registran prompts, claims ni cuerpos. Sin embargo, eso no resuelve finalidad, retención, región, entrenamiento, base legal ni el posible envío de invenciones aún no publicadas.
 
-## 4. Hallazgos de severidad media
+**Recomendación:** cerrar la decisión de privacidad antes del piloto, limitar la beta a patentes públicas/datos sintéticos hasta entonces, documentar el flujo, introducir aviso y consentimiento cuando corresponda, y evaluar un modo estrictamente local para casos sensibles.
 
-### M-01 — Posible inyección o alteración de filtros PostgREST
+### R-04 — El repositorio no reconstruye el esquema ni su postura de permisos
 
-**Evidencia:** `backend/app/services/patent_service.py:50-59` interpola directamente la consulta del usuario en la sintaxis cruda de `.or_()`. Solo reemplaza comas. `q` no tiene longitud máxima (`backend/app/routes/patents.py:20`).  
-**Impacto:** caracteres significativos de PostgREST —paréntesis, puntos, comodines y operadores— pueden provocar filtros inesperados, errores o consultas costosas. Esto no equivale necesariamente a SQL injection, pero sí rompe la frontera de datos/código del filtro.  
-**Recomendación:** evitar construir expresiones PostgREST con strings del usuario. Usar un RPC parametrizado, búsqueda FTS o una función de escape completa y probada. Añadir longitud máxima y casos adversariales.
+**Severidad:** media-alta · **Issue:** #24 · **Hallazgo original:** M-11
 
-### M-02 — Sin límites de tamaño efectivos para chat
+**Estado:** pendiente.
 
-**Evidencia:** `message`, `Message.content`, cantidad de `history` y cantidad/tamaño de `patents_context` no tienen `Field(max_length=...)` ni límites de lista (`backend/app/routes/chat.py:40-48`). El corte a 20 patentes ocurre después de deserializar todo (`:61`).  
-**Impacto:** cuerpos muy grandes consumen ancho de banda, memoria, validación y tokens. El historial crece en cada turno y se retransmite completo.  
-**Recomendación:** limitar body en proxy/ASGI; usar modelos Pydantic estrictos; acotar mensaje, turnos, IDs y presupuesto total de tokens; resumir o recortar historial.
+La primera migración comienza con `ALTER TABLE patentes`; no existe una migración que cree la tabla base. Tampoco están versionados de forma completa owner, constraints base, RLS, políticas y grants de tabla. La propia documentación reconoce que `patentes` debe existir previamente.
 
-### M-03 — Errores internos se devuelven al cliente
+Además, la migración 002 usa columnas como `apc`, `ww`, `lg_st` y `pd`, aunque la migración 003 es la que declara agregarlas. La secuencia numerada no puede garantizar una reconstrucción limpia sin depender del esquema externo preexistente.
 
-**Evidencia:** `backend/app/routes/chat.py:126-128` devuelve `detail=str(e)` para excepciones inesperadas. El frontend muestra ese detalle (`FloatingChat.tsx:117-129`). La ruta de clasificación también expone rutas locales y detalles del índice mediante `str(exc)` (`classification.py:17-18`; `classification_service.py:155-169`).  
-**Impacto:** puede revelar rutas, nombres internos, mensajes del SDK o detalles operativos útiles para reconocimiento.  
-**Recomendación:** responder con códigos y mensajes públicos estables; registrar internamente la excepción con stack trace y correlation ID; filtrar secretos y datos del usuario.
+Los scripts administrativos y el proceso web comparten el nombre `SUPABASE_KEY`. Esto no filtra secretos por sí mismo, pero facilita arrancar accidentalmente el API con una credencial privilegiada usada para cargas offline. La separación de credenciales runtime/administración debe formar parte del inventario de permisos de #24.
 
-### M-04 — Sin timeouts, cancelación ni política robusta de resiliencia
+**Recomendación:** obtener un dump de esquema autorizado sin datos, convertirlo en baseline reproducible, ordenar dependencias, versionar RLS/grants/owners y validar reconstrucción y drift en CI. Separar nombres y entornos de credenciales administrativas y de runtime.
 
-**Evidencia:** las llamadas a Gemini (`gemini_client.py:141-146`), Supabase (`patent_service.py`) y `fetch` del frontend (`frontend/src/lib/api.ts:101-180`) no configuran timeouts ni cancelación.  
-**Impacto:** peticiones colgadas ocupan workers/conexiones; navegación o cierre del componente no cancela trabajo; una caída parcial se propaga al usuario.  
-**Recomendación:** timeouts por dependencia, `AbortController` en cliente, cancelación al desconectar si es viable, reintentos solo en operaciones idempotentes con backoff/jitter, circuit breaker y presupuestos de tiempo end-to-end.
+### R-05 — La migración 003 mantiene operaciones destructivas sin plan seguro
 
-### M-05 — Rate limiter de Gemini es local y reserva fallos como consumo
+**Severidad:** media-alta · **Issue:** #25 · **Hallazgo original:** M-12
 
-**Evidencia:** contadores en memoria por instancia (`backend/app/services/gemini_client.py:50-109`), cuotas codificadas (`:39-43`) y reserva antes de la llamada (`:136-146`).  
-**Impacto:** múltiples workers o réplicas no comparten estado; reinicios restablecen contadores; cambios de cuota requieren despliegue; y fallos no contabilizados por el proveedor consumen capacidad local hasta expirar. La ventana de 24 h tampoco coincide con el reset real reconocido en el propio comentario.  
-**Recomendación:** tratar los límites locales como optimización, no como seguridad. Centralizar cuotas en Redis/gateway o consultar metadatos del proveedor; configurar modelos y límites por entorno; clasificar errores transitorios; exponer métricas sin publicar claves.
+**Estado:** pendiente.
 
-### M-06 — Trabajo intensivo sin aislamiento ni control de concurrencia
+`backend/migrations/003_new_columns_and_unique_pn.sql` elimina duplicados conservando automáticamente el mayor `id`, borra y recrea `search_vector` e índice GIN, y no incluye prechecks, respaldo de filas, transacción explícita, estrategia de locks, ejecución online ni rollback. Que pueda repetirse sin error no implica que sea segura operativamente.
 
-**Evidencia:** cada clasificación calcula un embedding y multiplica contra todo el índice (`classification_service.py:96-123`); el índice memmap y modelo son singletons de proceso (`dependencies.py:8-23`, `embedding_service.py:17-28`). Las rutas síncronas ejecutan esa labor durante la petición.  
-**Impacto:** varias peticiones simultáneas pueden saturar CPU, threads de PyTorch, memoria y ancho de banda de disco, degradando también endpoints ligeros. Cada worker carga su propia copia/modelo.  
-**Recomendación:** separar workloads ML del API web o usar una cola; limitar concurrencia con semáforo; dimensionar workers y threads explícitamente; cachear consultas normalizadas; precalentar con readiness independiente; medir P95/P99 y memoria por réplica.
+**Recomendación:** no ejecutar este archivo sin el plan de #25. Inspeccionar y exportar duplicados, aprobar una regla de merge, ensayar con volumen representativo, medir locks/tiempo, definir backup y rollback, y separar el cambio destructivo de la evolución aditiva.
 
-### M-07 — Cascada silenciosa convierte errores de programación en resultados degradados
+## 3. Hallazgo mitigado parcialmente
 
-**Evidencia:** `ClassificationService.recommend` captura cualquier `Exception` y devuelve fallback (`classification_service.py:89-94`).  
-**Impacto:** errores de esquema, bugs o problemas de programación quedan ocultos como una respuesta aparentemente válida, dificultando detección y pudiendo mostrar clasificaciones de menor calidad sin distinguir la causa.  
-**Recomendación:** capturar únicamente errores esperados del proveedor/parsing; propagar o alertar sobre fallos inesperados; devolver un indicador estructurado del modo `local_fallback`; instrumentar frecuencia y causa.
+### R-06 — CSP configurada, pero todavía no aplicada
 
-### M-08 — Acceso a detalle puede convertir “no encontrado” en 500
+**Severidad residual:** media-baja · **Hallazgo original:** M-13
 
-**Evidencia:** `PatentService.get_by_id` usa `.single().execute()` (`patent_service.py:33-41`) y la ruta solo comprueba un retorno falsy (`routes/patents.py:66-74`). PostgREST normalmente responde con error cuando `.single()` encuentra cero filas.  
-**Impacto:** IDs inexistentes pueden escapar como excepción de infraestructura en vez de 404. El frontend además transforma cualquier fallo en `notFound()` (`frontend/src/app/patentes/[id]/page.tsx:29-34`), ocultando caídas reales como inexistencia.  
-**Recomendación:** usar `maybe_single()` o traducir explícitamente el código “0 rows” a 404; mapear timeouts/5xx a una página de error/reintento, no a 404; probar con el cliente Supabase real o un contrato fiel.
+**Estado:** mitigado parcialmente; #26 está cerrado.
 
-### M-09 — Waterfalls de red evitables en Server Components
+El frontend ya versiona `Permissions-Policy`, `Referrer-Policy`, `X-Content-Type-Options`, protección de framing y HSTS en producción. La CSP, sin embargo, se sirve como `Content-Security-Policy-Report-Only` y admite `'unsafe-inline'` para scripts y estilos (`frontend/src/lib/securityHeaders.mjs:12-29`). En ese modo detecta violaciones, pero no las bloquea.
 
-**Evidencia:** una búsqueda espera primero `searchSemantic` y después `fetchPatents` (`frontend/src/app/page.tsx:29-40`). El detalle espera la patente antes de solicitar similares (`frontend/src/app/patentes/[id]/page.tsx:29-44`), aunque el comentario afirma que es paralelo.  
-**Impacto:** se suma latencia de red innecesaria y empeora TTFB.  
-**Recomendación:** iniciar peticiones independientes juntas con `Promise.all`/`Promise.allSettled`; considerar un endpoint agregado; usar límites de `Suspense` para streaming; evitar calcular el total del corpus en cada búsqueda si puede cachearse.
+**Recomendación:** recoger reportes durante el piloto, eliminar permisos innecesarios y pasar gradualmente a `Content-Security-Policy` aplicada. No es un bloqueo para una beta controlada, pero sí una defensa pendiente antes de considerar completo el hardening del navegador.
 
-### M-10 — Todo el fetching desactiva caché y repite conteos costosos
+## 4. Observaciones nuevas o residuales
 
-**Evidencia:** todas las funciones de `frontend/src/lib/api.ts:101-180` usan `cache: "no-store"`. `get_all` y `search` realizan un count y una consulta de datos separadas (`patent_service.py:17-31`, `:43-78`).  
-**Impacto:** navegación repetida golpea Supabase en cada render; `count="exact"` puede ser costoso en tablas grandes; no hay deduplicación o revalidación para datos relativamente estables.  
-**Recomendación:** definir frescura por caso, usar caché/revalidación de Next para listados/detalles públicos, cachear el total, considerar conteos estimados y medir el plan SQL. Mantener `no-store` solo donde la frescura lo exige.
+### N-01 — Vulnerabilidad moderada en una dependencia transitiva frontend
 
-### M-11 — Migraciones incompletas como fuente única del esquema y permisos
+`npm audit --omit=dev` detectó una vulnerabilidad moderada en `baseline-browser-mapping@2.10.8`, incorporada por Next.js y Browserslist. No se encontraron vulnerabilidades altas o críticas y npm informa que hay corrección disponible. Referencia: [GHSA-w5vr-8v7q-w6rv](https://github.com/advisories/GHSA-w5vr-8v7q-w6rv).
 
-**Evidencia:** el README reconoce que no se crea la tabla base. No hay migraciones para RLS, políticas, grants completos, constraints de dominio ni rollback. `pd` es texto (`003_new_columns_and_unique_pn.sql:30-33`) y casi todos los campos admiten null.  
-**Impacto:** no se puede reconstruir ni auditar un entorno desde cero; dev/staging/prod pueden divergir; fechas inválidas impiden rangos fiables; la postura de seguridad queda fuera de control de versiones.  
-**Recomendación:** versionar esquema completo, propietarios, RLS, grants, constraints, funciones y datos de referencia; usar `date`/`timestamptz` según corresponda; añadir checks; introducir una herramienta de migraciones con tabla de versiones y validación en CI.
+**Riesgo práctico:** bajo para los flujos actuales porque la librería no procesa directamente una entrada de usuario en la aplicación, pero debe actualizarse el lock y repetirse build/auditoría en el siguiente mantenimiento de dependencias. El CI actual solo falla desde severidad alta, por lo que esta alerta moderada no bloqueará un PR.
 
-### M-12 — Migración 003 borra datos y reconstruye un índice sin salvaguardas
+### N-02 — `/metrics` expone telemetría operativa sin control de acceso
 
-**Evidencia:** elimina duplicados conservando la fila de mayor ID (`003_new_columns_and_unique_pn.sql:63-71`) y elimina/recrea `search_vector` e índice (`:87-106`). No hay transacción explícita, respaldo, auditoría de duplicados ni estrategia online.  
-**Impacto:** puede perderse información válida de filas duplicadas y producir bloqueo/downtime o un estado parcial si falla una sentencia. La fila más reciente no necesariamente es la más completa.  
-**Recomendación:** ejecutar prechecks y exportar duplicados; definir reglas de merge; envolver cambios compatibles en transacción; usar estrategia online para índices/columnas según volumen; ensayar y medir locks en staging; documentar rollback.
-
-### M-13 — Falta de headers de seguridad y política CSP
-
-**Evidencia:** `frontend/next.config.ts` está vacío y no hay middleware/gateway versionado para CSP, HSTS, `Referrer-Policy`, `Permissions-Policy` o protección de framing.  
-**Impacto:** se pierde defensa en profundidad frente a XSS, clickjacking, fuga de referrer y uso innecesario de APIs del navegador.  
-**Recomendación:** definir headers en Next o, preferiblemente, en el edge/proxy con una CSP probada. Comenzar con `Content-Security-Policy-Report-Only`; restringir `connect-src` al backend/Gemini indirecto y verificar compatibilidad con Next/fonts.
-
-### M-14 — Enlaces externos provenientes de datos no se validan
-
-**Evidencia:** `patent.espacenet` se usa directamente como `href` (`frontend/src/app/patentes/[id]/page.tsx:154-164`). Los enlaces externos de Markdown generado por Gemini también se hacen clicables (`FloatingChat.tsx:193-204`).  
-**Impacto:** datos comprometidos o una salida manipulada del modelo pueden generar enlaces de phishing o esquemas no deseados. React/React Markdown aportan algunas protecciones, pero no sustituyen una política de URL explícita.  
-**Recomendación:** parsear con `URL`, permitir solo `https:` y, para Espacenet, una allowlist de dominios. Para el chat, deshabilitar enlaces externos o mostrar confirmación/dominio visible.
-
-### M-15 — Datos de búsqueda completos se duplican en `sessionStorage`
-
-**Evidencia:** `SearchContextStore` serializa todos los resultados (`frontend/src/components/SearchContextStore.tsx:10-14`), y `FloatingChat` los parsea sin validación (`:78-84`).  
-**Impacto:** se duplican datos y abstracts en memoria/almacenamiento accesible a cualquier script del mismo origen; una entrada corrupta produce una excepción; el estado puede quedar obsoleto o manipulado.  
-**Recomendación:** guardar solo IDs y query con un esquema versionado; validar/encapsular `JSON.parse`; aplicar TTL; rehidratar en servidor; limpiar al cerrar sesión si se incorpora autenticación.
-
-## 5. Hallazgos de severidad baja
-
-### B-01 — Configuración global en tiempo de importación
-
-`settings = Settings()` (`backend/app/config.py:15`) exige Supabase y Gemini incluso para iniciar health checks o funciones que no los usan. Los clientes globales (`routes/chat.py:14`) complican pruebas, rotación de claves y lifecycle. Usar `SettingsConfigDict`, caché de dependencia, factories e inicialización/lifespan explícito. Validar entorno de producción y permitir que funcionalidades opcionales fallen de forma aislada.
-
-### B-02 — Health check superficial
-
-`backend/app/main.py:34-36` siempre devuelve OK sin distinguir liveness de readiness. Añadir `/health/live` y `/health/ready`; comprobar de forma acotada configuración, artefactos y dependencias necesarias, sin filtrar secretos ni provocar cargas pesadas.
-
-### B-03 — CORS de desarrollo habilitado por defecto
-
-`allow_local_network_origins=True` (`config.py:8`) y la regex admite cualquier origen HTTP en rangos privados (`main.py:9-27`). Aunque CORS no es control de autenticación, el default es arriesgado para producción. Usar default seguro (`False`), lista explícita por entorno y métodos/headers mínimos.
-
-### B-04 — Contratos Pydantic demasiado permisivos
-
-`Message.role` es `str`, el contexto usa `dict`, y varios modelos de salida ignoran campos extra (`models/patent.py:4-12`). Definir `Literal["user", "model"]`, modelos específicos, `extra="forbid"` para entradas y constraints de lista/texto. En chat, cualquier rol distinto de `user` se convierte silenciosamente en `model` (`routes/chat.py:107-110`).
-
-### B-05 — Defaults mutables poco expresivos
-
-`history = []` y `patents_context = []` (`routes/chat.py:47-48`) son manejados de forma segura por Pydantic v2, pero el patrón es fácil de copiar a Python normal y confunde intención. Usar `Field(default_factory=list)`.
-
-### B-06 — El API síncrono crea un cliente Supabase por petición
-
-`get_supabase()` llama `create_client` cada vez (`dependencies.py:11-16`). Verificar si el SDK reutiliza conexiones; preferir lifecycle y pool explícitos, o un cliente singleton seguro para concurrencia. Evaluar SDK async si se adopta FastAPI async.
-
-### B-07 — Tipos frontend duplicados y sin validación runtime
-
-`frontend/src/lib/api.ts` replica manualmente los modelos y devuelve `res.json()` con cast implícito. Ya existe una discrepancia: `Patent.id/pn` son opcionales en backend pero obligatorios en frontend. Generar cliente/tipos desde OpenAPI y validar respuestas críticas con un esquema runtime.
-
-### B-08 — Manejo de errores del chat cliente incompleto
-
-La carga de patente en `FloatingChat.tsx:69-77` no comprueba `r.ok`, no tiene `.catch()` y puede aceptar un body de error como patente. `JSON.parse` tampoco se protege. Añadir control de estado, error visible, cancelación y validación de payload.
-
-### B-09 — Paginación O(totalPages) y accesibilidad incompleta
-
-`Pagination.tsx:23-34` itera por todas las páginas aunque solo renderiza una ventana. Con corpus grande esto escala innecesariamente. Calcular directamente los pocos números visibles. Añadir `aria-label`, `aria-current="page"` y labels a botones solo-icono (limpiar/cerrar/enviar).
-
-### B-10 — Falta una estrategia formal de observabilidad
-
-Solo hay logs puntuales en chat/clasificación. No hay configuración estructurada, request/correlation ID, métricas, tracing, niveles por entorno ni redacción. Añadir latencia por endpoint/dependencia, errores, fallbacks, rate limits, uso de tokens/cuota, saturación y health de índice, evitando contenido sensible.
-
-### B-11 — No hay pruebas frontend, E2E ni pipeline CI
-
-El backend tiene una suite valiosa, pero no existe configuración de pruebas del frontend ni workflows CI. Tampoco se exige cobertura. Añadir unit/component tests, E2E de búsqueda/chat/clasificación, pruebas de accesibilidad, contrato OpenAPI y CI con lint, typecheck, build, tests, auditoría de dependencias y secret scanning.
-
-### B-12 — Higiene y documentación técnica mejorables
-
-`backend/package-lock.json` está vacío y no corresponde a un paquete Node; debe eliminarse si no tiene propósito. El directorio `backend/exel` contiene un typo que afecta claridad. `ruff` está en dependencias de producción. Algunos comentarios son inexactos: PostgreSQL `ts_rank_cd` no es BM25 estricto y el detalle afirma cargar similares “en paralelo” aunque es secuencial. Mantener documentación alineada con el comportamiento real.
-
-## 6. Revisión de arquitectura
-
-### Aspectos positivos
-
-- Separación inicial de rutas, servicios y modelos.
-- Inyección de `PatentService` y `ClassificationService`, lo que facilita dobles de prueba.
-- Índice CPC autocontenido, validado por versión, hash, shape y dtype.
-- Recuperación antes de generación y validación de códigos contra candidatos, reduciendo alucinaciones.
-- Modelos de respuesta explícitos que evitan exponer accidentalmente el embedding en endpoints normales.
-- Límites razonables en `top_k` del API y longitud del clasificador.
-- Frontend usa Server Components para páginas de lectura y evita `dangerouslySetInnerHTML`.
-- Tests backend cubren happy paths, fallbacks, concurrencia del limiter, CORS y errores principales.
-
-### Dirección recomendada
-
-La estructura actual es adecuada para un prototipo, pero antes de escalar conviene establecer cuatro fronteras claras:
-
-1. **API pública:** autenticación/autorización, cuotas, validación, contratos, errores estables y observabilidad.
-2. **Aplicación:** casos de uso de búsqueda, detalle, chat y clasificación sin acoplarlos al SDK de Supabase o Gemini.
-3. **Infraestructura:** adaptadores de Supabase, Gemini, embeddings e índice CPC, todos con timeout, métricas y errores tipados.
-4. **Procesamiento offline:** scripts de importación/indexación separados del runtime web, con configuración y dependencias propias.
-
-No es necesario imponer una arquitectura compleja. Protocolos pequeños (`PatentRepository`, `TextGenerator`, `Embedder`), excepciones de dominio y factories centralizadas serían suficientes para mejorar pruebas, portabilidad y resiliencia.
-
-## 7. Calidad y pruebas: brechas prioritarias
-
-Agregar pruebas para:
-
-- autenticación, autorización, rate limits y límites de body/historial;
-- filtros PostgREST con comas, puntos, paréntesis, `%`, Unicode y entradas largas;
-- 404 real de Supabase, timeout, 429, 5xx y respuestas malformadas;
-- prompt injection en descripción, claims, abstracts e historial;
-- concurrencia real del modelo/índice y consumo máximo de memoria;
-- RLS/grants/RPC desde roles `anon`, `authenticated` y backend;
-- compatibilidad de migraciones desde una base vacía y desde cada versión previa;
-- contrato generado entre FastAPI y TypeScript;
-- URL schemes y dominios externos;
-- navegación rápida/cancelación, sessionStorage corrupto y estados de error;
-- accesibilidad con teclado, focus, lectores de pantalla y viewport móvil;
-- regresión de ranking con un dataset de evaluación versionado y métricas como Recall@K/nDCG.
-
-## 8. Operación, despliegue y cadena de suministro
-
-- Crear imágenes reproducibles con usuario no root, filesystem de solo lectura cuando sea posible, health checks y SBOM.
-- Separar el artefacto CPC del contenedor y verificar su hash antes de promoverlo.
-- Fijar versiones de Python/Node y dependencias; usar `npm ci` y lock Python con hashes.
-- Ejecutar SAST, secret scanning, dependency review, auditoría de contenedores y licencias en CI.
-- Proteger ramas, exigir revisión y pruebas, y documentar rollback.
-- Gestionar secretos en el proveedor, con rotación y mínimo privilegio. Confirmar que `SUPABASE_KEY` del API sea `anon` salvo tareas administrativas separadas.
-- Separar credenciales de lectura del backend y credenciales administrativas de scripts. Nunca reutilizar `service_role` en el proceso web.
-- Mantener backups y probar restauración antes de migraciones destructivas.
-- Añadir entornos de staging y pruebas de carga para búsqueda vectorial y clasificación.
-
-## 9. Plan de remediación recomendado
-
-### Antes de cualquier despliegue público
-
-1. Actualizar Next.js/dependencias y repetir la auditoría.
-2. Revocar o limitar los RPC anónimos; versionar RLS/grants.
-3. Proteger chat, búsqueda semántica y clasificador con autenticación, cuotas y límites de concurrencia/body.
-4. Hacer que el servidor reconstruya el contexto del chat desde IDs confiables.
-5. Definir y comunicar el tratamiento de información confidencial enviada a Gemini.
-6. Dejar de exponer excepciones internas.
-
-### Corto plazo
-
-1. Fijar dependencias Python y añadir auditorías automáticas.
-2. Incorporar timeouts, cancelación, errores tipados y observabilidad.
-3. Corregir filtros PostgREST y el 404 de `.single()`.
-4. Paralelizar fetches independientes y definir una estrategia de caché.
-5. Añadir headers de seguridad y validación de URLs.
-6. Completar esquema/migraciones y estrategia de rollback.
-
-### Mediano plazo
-
-1. Aislar trabajo ML y controlar concurrencia/capacidad.
-2. Generar el cliente frontend desde OpenAPI.
-3. Añadir pruebas frontend/E2E, de seguridad, carga y migraciones en CI.
-4. Separar dependencias y credenciales de runtime versus procesos offline.
-5. Establecer SLO, métricas de calidad del ranking y alertas de costo/cuota.
-
-## 10. Conclusión
-
-El código muestra buenas decisiones para un prototipo funcional y tiene mejor cobertura backend que muchos proyectos en esta etapa. El riesgo principal no es una única vulnerabilidad artesanal, sino la combinación de **servicios costosos sin control de acceso**, **RPCs anónimos sin límites internos**, **dependencias vulnerables/no reproducibles** y **datos potencialmente confidenciales enviados a un LLM externo**. Resolver los seis hallazgos altos debería ser condición de salida para un despliegue público; después, las mejoras medias elevarán de forma notable la disponibilidad, mantenibilidad y capacidad de evolución.
+`GET /metrics` está registrado como ruta pública (`backend/app/main.py:164-166`). No expone prompts ni credenciales, pero sí nombres de operaciones/modelos, saturación, fallbacks, cuotas locales y concurrencia. Esa información facilita reconocimiento operativo y crece en sensibilidad cuando el servicio se hace público.
+
+**Recomendación:** restringirlo a red interna, token del collector o gateway; alternativamente, exportar métricas directamente al proveedor de observabilidad. Puede incorporarse a #13 o al trabajo de infraestructura del despliegue.
+
+### N-03 — La validación estricta no es uniforme en todos los requests
+
+El chat usa `extra="forbid"`, límites de listas, roles y presupuesto total (`backend/app/routes/chat.py:50-83`). En cambio, `SemanticSearchRequest` y `CpcClassificationRequest` conservan el comportamiento por defecto de ignorar campos extra; la búsqueda semántica acepta una cadena compuesta solo por espacios (`backend/app/models/patent.py:52-54`).
+
+**Recomendación:** crear una base común de requests con `extra="forbid"`, normalizar espacios y rechazar texto vacío. Es una mejora de contrato y robustez, no una vulnerabilidad crítica porque los campos desconocidos no se ejecutan.
+
+### N-04 — Avisos de compatibilidad en la suite Python
+
+Las pruebas pasan, pero pytest muestra que `asyncio_default_fixture_loop_scope` no está definido y Starlette avisa que su integración actual de `TestClient` con `httpx` está deprecada a favor de `httpx2`. Conviene resolver los avisos antes de actualizar dependencias para evitar una ruptura inesperada de la suite.
+
+## 5. Verificación de los hallazgos corregidos
+
+| Hallazgos originales | Estado verificado | Evidencia principal |
+| --- | --- | --- |
+| A-01 | Corregido | Next.js actualizado a 16.3.4; auditoría npm sin vulnerabilidades altas/críticas. |
+| A-04, M-02, M-15, B-04, B-05 | Corregidos en el flujo de chat | El navegador envía IDs y el servidor rehidrata contexto; límites de mensajes, historial, IDs y contexto; `sessionStorage` guarda solo versión/query/IDs. |
+| A-05 | Corregido | Locks Python separados, versiones transitivas y hashes; instalación reproducible y auditoría en CI. |
+| M-01 | Corregido | RPC léxica parametrizada, escape literal y límites duplicados en API/SQL. |
+| M-03 | Corregido | Errores públicos estables, correlation ID y logs estructurados con allowlist de campos. |
+| M-04, B-08 | Corregidos con riesgo residual cubierto por #13 | Timeouts por dependencia, reintentos acotados y cancelación frontend; el trabajo síncrono requiere backpressure. |
+| M-07 | Corregido | El fallback de clasificación captura errores esperados y propaga fallos inesperados; respuesta incluye `local_fallback`. |
+| M-08 | Corregido | `maybe_single`, 404 diferenciado y error recuperable en frontend para fallos de infraestructura. |
+| M-09, M-10 | Corregidos | Paralelismo de lecturas independientes, respuestas resumen, una consulta de datos+conteo y políticas de revalidación. |
+| M-14 | Corregido | HTTPS obligatorio, allowlist de Espacenet y validación de rutas internas del chat. |
+| B-01, B-02, B-03, B-06 | Corregidos | Settings y clientes mediante `create_app`/lifespan, reutilización/cierre, liveness/readiness y CORS seguro por entorno. |
+| B-07 | Corregido | OpenAPI versionado, tipos generados y validación runtime con Zod. |
+| B-09 | Corregido | Paginación de tamaño constante, navegación preservada y atributos accesibles. |
+| B-10 | Corregido | Métricas y logs estructurados, documentación operativa y señales de dependencias. Queda restringir `/metrics`. |
+| B-11 | Corregido | Unitarias frontend, E2E con servicios falsos y CI para backend, frontend, contratos, dependencias y secretos. |
+| B-12 | Corregido | Artefactos ignorados y documentación alineada con comandos, dependencias y comportamiento actual. |
+
+## 6. Evaluación de arquitectura actual
+
+### Fortalezas
+
+- Separación clara entre rutas, modelos, servicios y dependencias en FastAPI.
+- Factory de aplicación y lifespan que permiten pruebas sin servicios reales.
+- Servicios externos encapsulados con timeouts, reintentos y métricas.
+- Índice CPC validado mediante manifest, hash, forma, dtype y `allow_pickle=False`.
+- Server Components para lectura y validación runtime del contrato remoto.
+- Contexto del chat rehidratado desde la fuente autorizada.
+- CI reproducible con tests, lint, build, E2E, OpenAPI, auditorías y Gitleaks.
+- Logs sin contenido de usuario y etiquetas de métricas acotadas.
+
+### Deuda arquitectónica que debe guiar el MVP
+
+1. **Control plane de acceso:** #12 debe fijar una única fuente de identidad y responsabilidades entre gateway, API y base de datos.
+2. **Protección de recursos:** #13 debe acotar consumo global y por usuario, no solo cuota de un modelo por proceso.
+3. **Frontera de datos:** #14 y #24 deben lograr que ningún cliente directo tenga más permisos que el contrato público previsto.
+4. **Privacidad por diseño:** #17 debe decidir qué contenido puede salir a Gemini antes de invitar a usuarios con casos reales.
+5. **Infraestructura reproducible:** #24 y #25 deben permitir crear, migrar, recuperar y comparar entornos sin depender de conocimiento manual.
+
+No hace falta dividir ahora el backend en microservicios. Para el MVP sigue siendo adecuada una aplicación modular única con un frontend separado, una base gestionada y, si la carga lo exige, un worker/cola para operaciones pesadas. El límite útil es aislar recursos y credenciales, no multiplicar servicios prematuramente.
+
+## 7. Pruebas y comprobaciones ejecutadas
+
+| Comprobación | Resultado |
+| --- | --- |
+| `backend/.venv/Scripts/python.exe -m pytest` | 116 pruebas aprobadas; 2 avisos de deprecación/configuración futura. |
+| `backend/.venv/Scripts/python.exe -m ruff check app exel tests` | Aprobado. |
+| `backend/.venv/Scripts/python.exe scripts/export_openapi.py --check` | Aprobado; contrato sincronizado. |
+| `backend/.venv/Scripts/python.exe -m pip_audit -r requirements.lock --require-hashes` | Sin vulnerabilidades conocidas. |
+| `npm test` | 15 pruebas aprobadas. |
+| `npm run lint` | Aprobado. |
+| `npm run build` | Aprobado con Next.js 16.3.4. |
+| `npm run api:check` | Aprobado. |
+| `npm run test:e2e` | 6 flujos aprobados en Chromium con API falsa. |
+| `npm audit --omit=dev` | 1 moderada, 0 altas, 0 críticas. |
+
+## 8. Limitaciones de esta auditoría
+
+- No se ejecutaron migraciones ni consultas contra Supabase.
+- No se hicieron llamadas reales a Gemini ni se revisaron sus condiciones contractuales vigentes.
+- No se inspeccionaron RLS, grants, owners, secretos ni configuración efectiva de entornos remotos.
+- No se realizó pentesting dinámico, prueba de carga, análisis de imagen/contenedor ni auditoría de licencias.
+- No se ejecutó Gitleaks localmente; sí se verificó que no hay `.env`, datasets o índices locales rastreados y el CI contiene el escaneo.
+- Las garantías sobre privacidad y permisos dependen de decisiones y configuración externa aún pendientes.
+
+## 9. Orden recomendado
+
+1. Resolver #12: decisión de acceso e identidad.
+2. En paralelo después de la decisión, implementar #13 y #14.
+3. Resolver #17 antes de usar invenciones o conversaciones reales.
+4. Completar #24 como baseline de datos y seguridad.
+5. Ensayar y ejecutar #25 únicamente con el baseline, backup y rollback definidos.
+6. Atender N-01, restringir `/metrics` y pasar CSP a modo aplicado durante el hardening del piloto.
+
+El código ya no presenta la concentración inicial de deuda técnica. El siguiente salto de madurez depende principalmente de controles operativos y de seguridad alrededor del código: identidad, cuotas, permisos de base de datos, privacidad y recuperación del entorno.
