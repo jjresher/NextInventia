@@ -329,7 +329,8 @@ Importar el repositorio, seleccionar `frontend` como root, configurar las variab
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | Frontend, build | Ya existe. Es pública y debe apuntar a una URL alcanzable por el navegador |
 | `SUPABASE_URL` | Backend | Ya existe. No basta para conceder permisos |
-| `SUPABASE_KEY` | Backend | Ya existe. Auditar privilegios y uso; no publicar claves administrativas |
+| `SUPABASE_ANON_KEY` | Backend | Ya existe. Clave anon de solo lectura; es la unica que debe estar en el entorno del API |
+| `SUPABASE_SERVICE_ROLE_KEY` | Procesos de `backend/exel/` | Ya existe. Clave administrativa de escritura; nunca en el entorno del API ni en el frontend |
 | `GEMINI_API_KEY` | Backend | Ya existe. Secreta, separada por entorno |
 | `FRONTEND_ORIGIN` | Backend | Ya existe. Origen exacto con esquema y puerto si corresponde |
 | `ALLOW_LOCAL_NETWORK_ORIGINS` | Backend | Ya existe. `false` en producción |
