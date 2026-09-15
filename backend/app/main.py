@@ -87,7 +87,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        supabase = make_supabase(settings.supabase_url, settings.supabase_key)
+        supabase = make_supabase(settings.supabase_url, settings.supabase_anon_key)
         gemini = make_gemini(settings.gemini_api_key)
         application.state.supabase = supabase
         application.state.gemini = gemini
