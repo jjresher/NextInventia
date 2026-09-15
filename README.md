@@ -310,12 +310,14 @@ Las migraciones añaden o utilizan, entre otros:
 apc, pd, ww, lg_st, embedding, cluster_id, search_vector
 ```
 
-Ejecute en el SQL Editor de Supabase, en este orden:
+Sobre una base nueva se aplican con el Supabase CLI (vea *Flujo de migraciones*
+más abajo), en el orden que fija su timestamp:
 
-1. `backend/migrations/001_enable_extensions_and_columns.sql`
-2. `backend/migrations/002_hybrid_search_function.sql`
-3. `backend/migrations/003_new_columns_and_unique_pn.sql`
-4. `backend/migrations/004_parameterized_lexical_search.sql`
+1. `supabase/migrations/20260714092052_enable_extensions_and_columns.sql`
+2. `supabase/migrations/20260714092053_hybrid_search_function.sql`
+3. `supabase/migrations/20260714092054_new_columns_and_unique_pn.sql`
+4. `supabase/migrations/20260714092055_parameterized_lexical_search.sql`
+5. `supabase/migrations/20260906173200_rls_policies.sql`
 
 La migración 003 elimina filas con `pn` duplicado y conserva la de mayor `id`
 antes de crear la restricción única. Revise los duplicados y respalde los datos
