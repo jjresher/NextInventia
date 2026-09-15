@@ -25,6 +25,9 @@ build/
 *.egg-info/
 *.egg
 
+# Node (tooling de la raíz: Supabase CLI)
+node_modules/
+
 # IDEs
 .vscode/
 .idea/
@@ -43,3 +46,9 @@ Desktop.ini
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Datos de exports/merges (archivos de trabajo, no versionar)
+backend/exel/*.xlsx
+backend/exel/*.csv
+# Catalogo CPC completo e indice vectorial local
+backend/data/cpc_index/

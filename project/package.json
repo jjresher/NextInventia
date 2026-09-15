@@ -1,0 +1,15 @@
+{
+  "name": "nextinventia-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Herramientas de desarrollo a nivel de repositorio (Supabase CLI). No es un paquete publicable ni contiene código de la aplicación: el backend vive en backend/ y el frontend en frontend/.",
+  "scripts": {
+    "db:new": "supabase migration new",
+    "db:list": "supabase migration list --linked",
+    "db:diff": "supabase db push --dry-run --linked",
+    "db:push": "supabase db push --linked"
+  },
+  "devDependencies": {
+    "supabase": "2.117.0"
+  }
+}

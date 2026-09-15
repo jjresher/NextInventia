@@ -81,7 +81,7 @@ class PatentService:
         """Búsqueda híbrida BM25 + Sentence-BERT con fusión RRF.
 
         Llama al RPC `search_patentes_hybrid` definido en
-        `migrations/002_hybrid_search_function.sql`.
+        `supabase/migrations/20260714092053_hybrid_search_function.sql`.
         """
         query_embedding = encode_query(query)
         resp = self._client.rpc(

@@ -35,7 +35,12 @@ CSV_FILE = SCRIPT_DIR / "ppulse-merged.csv"
 load_dotenv(BACKEND_DIR / ".env")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+if not SUPABASE_SERVICE_ROLE_KEY:
+    raise RuntimeError(
+        "Falta SUPABASE_SERVICE_ROLE_KEY en .env — este script requiere la "
+        "service_role key, no la anon key."
+    )
 
 TABLE_NAME = "patentes"
 
@@ -176,7 +181,7 @@ def insert_in_batches(client, rows: list[dict]) -> int:
 
 def upload() -> None:
     print(f"Conectando a Supabase y leyendo {CSV_FILE.name}...")
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     rows = read_csv_rows()
     print(f"  CSV: {len(rows)} filas leídas con {len(EXPECTED_COLUMNS)} columnas esperadas.")
 
