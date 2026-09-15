@@ -11,7 +11,7 @@ from app.main import create_app
 def make_settings(**overrides) -> Settings:
     values = {
         "supabase_url": "http://supabase.test",
-        "supabase_key": "fake-key",
+        "supabase_anon_key": "fake-key",
         "gemini_api_key": "fake-gemini-key",
         "frontend_origin": "https://frontend.test",
         "app_environment": "test",

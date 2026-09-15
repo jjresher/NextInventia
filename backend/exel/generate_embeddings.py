@@ -28,7 +28,14 @@ BACKEND_DIR = SCRIPT_DIR.parent
 load_dotenv(BACKEND_DIR / ".env")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+try:
+    SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+except KeyError:
+    raise SystemExit(
+        "Falta SUPABASE_SERVICE_ROLE_KEY. Los procesos de exel/ escriben en la base y "
+        "necesitan la clave service_role; SUPABASE_ANON_KEY es de solo lectura y solo "
+        "la usa el backend del API."
+    ) from None
 
 TABLE = "patentes"
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -83,7 +90,7 @@ def main() -> None:
     model = SentenceTransformer(MODEL_NAME)
     print(f"Modelo listo. Dimensión: {model.get_sentence_embedding_dimension()}")
 
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     # Total pendiente para barra de progreso (head-only count).
     count_resp = (

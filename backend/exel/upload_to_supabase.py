@@ -35,7 +35,14 @@ CSV_FILE = SCRIPT_DIR / "ppulse-merged.csv"
 load_dotenv(BACKEND_DIR / ".env")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+try:
+    SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+except KeyError:
+    raise SystemExit(
+        "Falta SUPABASE_SERVICE_ROLE_KEY. Los procesos de exel/ escriben en la base y "
+        "necesitan la clave service_role; SUPABASE_ANON_KEY es de solo lectura y solo "
+        "la usa el backend del API."
+    ) from None
 
 TABLE_NAME = "patentes"
 
@@ -176,7 +183,7 @@ def insert_in_batches(client, rows: list[dict]) -> int:
 
 def upload() -> None:
     print(f"Conectando a Supabase y leyendo {CSV_FILE.name}...")
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     rows = read_csv_rows()
     print(f"  CSV: {len(rows)} filas leídas con {len(EXPECTED_COLUMNS)} columnas esperadas.")
 

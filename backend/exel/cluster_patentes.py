@@ -34,7 +34,14 @@ BACKEND_DIR = SCRIPT_DIR.parent
 load_dotenv(BACKEND_DIR / ".env")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+try:
+    SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+except KeyError:
+    raise SystemExit(
+        "Falta SUPABASE_SERVICE_ROLE_KEY. Los procesos de exel/ escriben en la base y "
+        "necesitan la clave service_role; SUPABASE_ANON_KEY es de solo lectura y solo "
+        "la usa el backend del API."
+    ) from None
 TABLE = "patentes"
 
 K = int(os.getenv("KMEANS_K", "20"))
@@ -192,7 +199,7 @@ def print_summary(ids: list[int], labels: np.ndarray, titles: dict[int, str], k:
 
 def main() -> None:
     print("Conectando a Supabase y descargando embeddings...")
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
     ids, embeddings, titles = fetch_all_embeddings(client)
     n = len(ids)

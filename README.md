@@ -152,7 +152,11 @@ Configuración de `backend/.env`:
 
 ```dotenv
 SUPABASE_URL=https://TU_PROYECTO.supabase.co
-SUPABASE_KEY=TU_CLAVE_DE_SUPABASE
+# Clave anon (solo lectura). La usa unicamente el backend del API.
+SUPABASE_ANON_KEY=TU_CLAVE_ANON_DE_SUPABASE
+# Clave service_role (escritura). Solo para los procesos de exel/; no la
+# configure en el entorno donde corre el API.
+SUPABASE_SERVICE_ROLE_KEY=TU_CLAVE_SERVICE_ROLE_DE_SUPABASE
 GEMINI_API_KEY=TU_CLAVE_DE_GEMINI
 
 # Origen exacto del frontend principal.

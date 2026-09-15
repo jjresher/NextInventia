@@ -12,7 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 os.environ.setdefault("SUPABASE_URL", "http://openapi.invalid")
-os.environ.setdefault("SUPABASE_KEY", "openapi-placeholder")
+os.environ.setdefault("SUPABASE_ANON_KEY", "openapi-placeholder")
 os.environ.setdefault("GEMINI_API_KEY", "openapi-placeholder")
 
 from app.main import app  # noqa: E402

@@ -5,7 +5,7 @@ Supabase nunca hace llamadas reales: los tests corren sin .env ni red.
 import os
 
 os.environ.setdefault("SUPABASE_URL", "http://fake-url-for-testing")
-os.environ.setdefault("SUPABASE_KEY", "fake-key-for-testing")
+os.environ.setdefault("SUPABASE_ANON_KEY", "fake-key-for-testing")
 os.environ.setdefault("FRONTEND_ORIGIN", "http://localhost:3000")
 os.environ.setdefault("APP_ENVIRONMENT", "test")
 os.environ.setdefault("ALLOW_LOCAL_NETWORK_ORIGINS", "true")
